@@ -95,6 +95,7 @@ def add_campaign():
         daily_target=data.get("daily_target", 300),
         dwell_min=data.get("dwell_time_min", 30.0),
         dwell_max=data.get("dwell_time_max", 90.0),
+        campaign_type=data.get("type", "shopping"),
     )
     log.info("Campaign added: #%d %s [%s]", cid, data["customer_name"], data["keyword"])
     return jsonify({"id": cid})
