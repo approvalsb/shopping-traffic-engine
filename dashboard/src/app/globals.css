@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0a0a1a;
+  --bg-secondary: #111127;
+  --bg-card: #16163a;
+  --border: #2a2a5a;
+  --text-primary: #e0e0e0;
+  --text-secondary: #8888aa;
+  --accent-green: #00e676;
+  --accent-yellow: #ffd740;
+  --accent-red: #ff5252;
+  --accent-blue: #448aff;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+}

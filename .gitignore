@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Data & DB
+data/
+*.db
+*.db-journal
+*.db-wal
+tracking_cache.json
+
+# Credentials
+accounts.json
+.env
+
+# Node / Dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+
+# Logs & Screenshots
+logs/
+screenshots/
+
+# OMC state
+.omc/
+dashboard/.omc/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+overview.html
+plan.html

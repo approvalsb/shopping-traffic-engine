@@ -1,0 +1,32 @@
+{
+  "keyword": "여성 원피스 봄",
+  "product_name": "플라워 원피스",
+  "product_url": "https://smartstore.naver.com/example/products/12345",
+  "daily_target": 100,
+  "dwell_time_min": 30,
+  "dwell_time_max": 90,
+  "delay_between_min": 15,
+  "delay_between_max": 45,
+  "headless": true,
+  "mode": "persistent",
+
+  "_proxy_examples": {
+    "brightdata": {
+      "provider": "brightdata",
+      "host": "brd.superproxy.io",
+      "port": 22225,
+      "username": "brd-customer-XXXXX-zone-residential",
+      "password": "YOUR_PASSWORD",
+      "sessions": 20
+    },
+    "oxylabs": {
+      "provider": "oxylabs",
+      "host": "pr.oxylabs.io",
+      "port": 7777,
+      "username": "YOUR_USERNAME",
+      "password": "YOUR_PASSWORD",
+      "sessions": 20
+    },
+    "manual_file": "proxies.txt"
+  }
+}

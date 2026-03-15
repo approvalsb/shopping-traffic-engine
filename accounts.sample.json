@@ -1,0 +1,10 @@
+[
+  {
+    "id": "your_naver_id",
+    "pw": "your_password",
+    "status": "active",
+    "daily_limit": 2,
+    "last_used": null,
+    "notes": ""
+  }
+]
