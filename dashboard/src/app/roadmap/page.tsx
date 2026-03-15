@@ -30,7 +30,8 @@ const phases = [
     color: "#448aff",
     items: [
       { title: "VPS 워커 배포", desc: "deploy_vps.sh 자동 배포, systemd 서비스, 그레이스풀 셧다운", tag: "Medium", tagColor: "#8888aa", done: true },
-      { title: "VPS 자동 스케일 + 키워드 리서치", desc: "클라우드 auto-scale, 네이버 광고 API 연동, 모바일 트래픽", tag: "Medium", tagColor: "#8888aa", done: false },
+      { title: "GitHub + CI/CD", desc: "GitHub 레포 구축, 대시보드 Vercel 배포, VPS 원격 배포 자동화", tag: "Medium", tagColor: "#8888aa", done: true },
+      { title: "VPS 자동 스케일 + 키워드 리서치", desc: "클라우드 auto-scale, 네이버 광고 API 연동, 모바일 트래픽", tag: "Low", tagColor: "#8888aa", done: false },
     ],
   },
 ];
