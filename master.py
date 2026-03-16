@@ -6,11 +6,13 @@ Usage:
     python master.py [--host 0.0.0.0] [--port 5000]
 """
 
+import json
 import sys
 import logging
 import threading
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from pathlib import Path
 
 from flask import Flask, request, jsonify
 
@@ -142,6 +144,55 @@ def get_summary():
         "pending": pending,
         "running": running,
         "progress_pct": round(pct, 1),
+    })
+
+
+@app.route("/api/tracking", methods=["GET"])
+def get_tracking():
+    """Return tracking cache data for dashboard."""
+    cache_path = Path("data/tracking_cache.json")
+    if not cache_path.exists():
+        return jsonify({"campaigns": [], "history": [], "latest": None, "trend": "stable"})
+
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return jsonify({"campaigns": [], "history": [], "latest": None, "trend": "stable"})
+
+    campaign_id = request.args.get("campaignId")
+    days = int(request.args.get("days", "30"))
+
+    if not campaign_id:
+        campaigns = []
+        for cid, data in cache.items():
+            campaigns.append({
+                "id": int(cid),
+                "customer_name": (data.get("latest") or {}).get("customer_name", f"Campaign {cid}"),
+                "keyword": (data.get("latest") or {}).get("keyword", ""),
+                "type": (data.get("latest") or {}).get("type", ""),
+                "latest_rank": (data.get("latest") or {}).get("rank"),
+                "trend": data.get("trend", "stable"),
+            })
+        return jsonify({"campaigns": campaigns, "history": [], "latest": None, "trend": "stable"})
+
+    entry = cache.get(campaign_id)
+    if not entry:
+        return jsonify({"history": [], "latest": None, "trend": "stable"})
+
+    cutoff = datetime.now() - timedelta(days=days)
+    filtered = []
+    for h in entry.get("history", []):
+        checked = h.get("checked_at", "")
+        try:
+            if datetime.strptime(checked, "%Y-%m-%d %H:%M:%S") >= cutoff:
+                filtered.append(h)
+        except ValueError:
+            filtered.append(h)
+
+    return jsonify({
+        "history": filtered,
+        "latest": entry.get("latest"),
+        "trend": entry.get("trend", "stable"),
     })
 
 
