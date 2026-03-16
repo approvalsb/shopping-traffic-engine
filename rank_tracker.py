@@ -13,7 +13,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from database import get_db, get_campaign, save_tracking, DB_PATH
+from database import get_db, get_campaign, list_campaigns, save_tracking, DB_PATH
 
 log = logging.getLogger("rank_tracker")
 
@@ -337,9 +337,46 @@ def run_tracking(campaign_id: int) -> dict | None:
     return result
 
 
+def run_all_tracking() -> list[dict]:
+    """Run rank tracking for ALL active campaigns.
+
+    Returns list of tracking results.
+    """
+    import time
+
+    campaigns = list_campaigns(active_only=True)
+    if not campaigns:
+        log.info("No active campaigns found.")
+        return []
+
+    results = []
+    for camp in campaigns:
+        cid = camp["id"]
+        log.info("Tracking campaign #%d [%s] keyword='%s'", cid, camp.get("type", "?"), camp["keyword"])
+        try:
+            result = run_tracking(cid)
+            if result:
+                rank_str = f"#{result['rank']}" if result.get("rank") else "not found"
+                log.info("  -> %s", rank_str)
+                results.append(result)
+            else:
+                log.warning("  -> tracking failed")
+        except Exception as e:
+            log.error("  -> error: %s", e)
+
+        # Polite delay between requests to avoid rate limiting
+        time.sleep(2)
+
+    # Summary
+    found = sum(1 for r in results if r.get("rank") is not None)
+    log.info("Tracking complete: %d/%d campaigns tracked, %d ranked", len(results), len(campaigns), found)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Naver Rank Tracker")
     parser.add_argument("--campaign-id", type=int, help="Campaign ID to track")
+    parser.add_argument("--all", action="store_true", help="Track ALL active campaigns")
     parser.add_argument("--keyword", type=str, help="Search keyword (manual mode)")
     parser.add_argument("--blog-id", type=str, help="Blog ID for blog rank check")
     parser.add_argument("--place-name", type=str, help="Place name for place rank check")
@@ -352,7 +389,17 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    if args.campaign_id:
+    if args.all:
+        results = run_all_tracking()
+        print(f"\n{'='*50}")
+        print(f"  Rank Tracking Summary")
+        print(f"{'='*50}")
+        for r in results:
+            rank = f"#{r['rank']}" if r.get("rank") else "N/A"
+            print(f"  [{r.get('type','?')}] {r.get('keyword','')} -> {rank}")
+        print(f"{'='*50}")
+
+    elif args.campaign_id:
         result = run_tracking(args.campaign_id)
         if result:
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -374,7 +421,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
     else:
-        parser.error("Specify --campaign-id or --keyword with a target option")
+        parser.error("Specify --all, --campaign-id, or --keyword with a target option")
 
 
 if __name__ == "__main__":
