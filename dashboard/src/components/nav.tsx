@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Settings, Monitor, Zap, Shield, Calculator, CreditCard, Rocket, Search } from "lucide-react";
+import { BarChart3, Settings, Monitor, Zap, Shield, Calculator, CreditCard, Rocket, Search, CalendarClock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
@@ -12,6 +12,7 @@ const links = [
   { href: "/stealth", label: "감지방지", icon: Shield },
   { href: "/cost", label: "원가분석", icon: Calculator },
   { href: "/pricing", label: "요금제", icon: CreditCard },
+  { href: "/schedule", label: "작업 스케줄", icon: CalendarClock },
   { href: "/tracking", label: "성과 추적", icon: Search },
   { href: "/roadmap", label: "로드맵", icon: Rocket },
 ];

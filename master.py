@@ -147,6 +147,76 @@ def get_summary():
     })
 
 
+@app.route("/api/schedule", methods=["GET"])
+def get_schedule():
+    """Return today's job schedule with hourly breakdown."""
+    target_date = request.args.get("date", date.today().isoformat())
+    conn = db.get_db()
+    rows = conn.execute(
+        """SELECT j.id, j.scheduled_hour, j.status, j.started_at, j.completed_at,
+                  j.duration_sec, j.error,
+                  c.id as campaign_id, c.type, c.keyword, c.customer_name,
+                  c.product_name, c.engage_like
+           FROM jobs j
+           JOIN campaigns c ON j.campaign_id = c.id
+           WHERE j.scheduled_date = ?
+           ORDER BY j.scheduled_hour, c.id""",
+        (target_date,),
+    ).fetchall()
+    conn.close()
+
+    # Group by hour
+    hours = {}
+    for r in rows:
+        h = r["scheduled_hour"]
+        if h not in hours:
+            hours[h] = []
+        hours[h].append({
+            "job_id": r["id"],
+            "campaign_id": r["campaign_id"],
+            "type": r["type"],
+            "keyword": r["keyword"],
+            "customer_name": r["customer_name"],
+            "product_name": r["product_name"],
+            "engage_like": bool(r["engage_like"]),
+            "status": r["status"],
+            "started_at": r["started_at"],
+            "completed_at": r["completed_at"],
+            "duration_sec": r["duration_sec"],
+            "error": r["error"],
+        })
+
+    # Build full 24h timeline
+    timeline = []
+    for hour in range(24):
+        jobs = hours.get(hour, [])
+        done = sum(1 for j in jobs if j["status"] == "completed")
+        fail = sum(1 for j in jobs if j["status"] == "failed")
+        run = sum(1 for j in jobs if j["status"] == "running")
+        pend = sum(1 for j in jobs if j["status"] == "pending")
+        timeline.append({
+            "hour": hour,
+            "total": len(jobs),
+            "completed": done,
+            "failed": fail,
+            "running": run,
+            "pending": pend,
+            "jobs": jobs,
+        })
+
+    total_jobs = len(rows)
+    total_done = sum(1 for r in rows if r["status"] == "completed")
+    total_fail = sum(1 for r in rows if r["status"] == "failed")
+
+    return jsonify({
+        "date": target_date,
+        "total": total_jobs,
+        "completed": total_done,
+        "failed": total_fail,
+        "timeline": timeline,
+    })
+
+
 @app.route("/api/tracking", methods=["GET"])
 def get_tracking():
     """Return tracking cache data for dashboard."""
