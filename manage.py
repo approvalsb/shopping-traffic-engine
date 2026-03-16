@@ -30,8 +30,10 @@ def cmd_campaign_add(args):
         dwell_min=args.dwell_min,
         dwell_max=args.dwell_max,
         campaign_type=args.type,
+        engage_like=args.engage_like,
     )
-    print(f"Campaign #{cid} added: [{args.type}] {args.customer} [{args.keyword}] target={args.target}/day")
+    like_tag = " [공감ON]" if args.engage_like else ""
+    print(f"Campaign #{cid} added: [{args.type}] {args.customer} [{args.keyword}] target={args.target}/day{like_tag}")
 
 
 def cmd_campaign_list(args):
@@ -235,6 +237,7 @@ def main():
     add_p.add_argument("--target", type=int, default=300, help="Daily target (default: 300)")
     add_p.add_argument("--dwell-min", type=float, default=30.0, help="Min dwell time sec")
     add_p.add_argument("--dwell-max", type=float, default=90.0, help="Max dwell time sec")
+    add_p.add_argument("--engage-like", action="store_true", help="Enable 공감 (blog only, requires accounts)")
     add_p.set_defaults(func=cmd_campaign_add)
 
     # campaign list

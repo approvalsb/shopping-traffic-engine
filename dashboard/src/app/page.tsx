@@ -32,6 +32,7 @@ interface CampaignStat {
   failed: number;
   pending: number;
   total: number;
+  engage_like?: number;
 }
 
 interface StatsData {
@@ -226,6 +227,7 @@ export default function DashboardPage() {
                         </td>
                         <td className="py-3 pr-4 text-[#e0e0e0]">
                           {c.keyword}
+                          {c.engage_like ? <span className="ml-1.5 text-[10px] text-[#ff6eb4]" title="공감 ON">👍</span> : null}
                         </td>
                         <td className="py-3 pr-4 text-right font-mono">
                           {formatNumber(c.daily_target)}

@@ -26,6 +26,8 @@ interface Campaign {
   dwell_time_max: number;
   active: number;
   created_at: string;
+  hourly_weights?: string;
+  engage_like?: number;
 }
 
 const paidOptions = [
@@ -84,6 +86,7 @@ export default function CampaignsPage() {
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -449,84 +452,237 @@ export default function CampaignsPage() {
             </p>
           ) : (
             <div className="space-y-3">
-              {campaigns.map((c) => (
-                <div
-                  key={c.id}
-                  className={`flex items-center justify-between rounded-lg border p-4 transition-colors ${
-                    c.active
-                      ? "border-[#2a2a5a] bg-[#16163a]/50"
-                      : "border-[#2a2a5a]/50 bg-[#0a0a1a] opacity-60"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${
-                        c.type === "place"
-                          ? "bg-[#448aff]/15"
-                          : c.type === "blog"
-                          ? "bg-[#ffd740]/15"
-                          : "bg-[#00e676]/15"
-                      }`}
-                    >
-                      {c.type === "place" ? "📍" : c.type === "blog" ? "📝" : "🛒"}
+              {campaigns.map((c) => {
+                const isExpanded = expandedId === c.id;
+                // Parse hourly weights
+                let weights: Record<number, number> = {};
+                try {
+                  if (c.hourly_weights) {
+                    const parsed = JSON.parse(c.hourly_weights);
+                    weights = Object.fromEntries(
+                      Object.entries(parsed).map(([k, v]) => [Number(k), Number(v)])
+                    );
+                  }
+                } catch { /* ignore */ }
+                const maxWeight = Math.max(...Object.values(weights), 0.01);
+                const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
+
+                // Calculate per-hour job distribution (weighted sampling for small targets)
+                const hourDist: Record<number, number> = {};
+                const sortedHours = Object.entries(weights)
+                  .map(([h, w]) => ({ h: Number(h), w: Number(w) }))
+                  .sort((a, b) => b.w - a.w);
+                if (c.daily_target <= 24) {
+                  // For small targets: assign 1 job each to top N weighted hours
+                  let assigned = 0;
+                  for (const { h } of sortedHours) {
+                    if (assigned >= c.daily_target) break;
+                    hourDist[h] = 1;
+                    assigned++;
+                  }
+                } else {
+                  let remaining = c.daily_target;
+                  for (const { h, w } of sortedHours) {
+                    const jobs = Math.round((w / totalWeight) * c.daily_target);
+                    hourDist[h] = Math.min(jobs, remaining);
+                    remaining -= hourDist[h];
+                  }
+                }
+
+                return (
+                <div key={c.id}>
+                  <div
+                    onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                    className={`flex items-center justify-between rounded-lg border p-4 transition-colors cursor-pointer ${
+                      c.active
+                        ? isExpanded
+                          ? "border-[#448aff] bg-[#16163a]"
+                          : "border-[#2a2a5a] bg-[#16163a]/50 hover:border-[#448aff]/50"
+                        : "border-[#2a2a5a]/50 bg-[#0a0a1a] opacity-60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div
+                        className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${
+                          c.type === "place"
+                            ? "bg-[#448aff]/15"
+                            : c.type === "blog"
+                            ? "bg-[#ffd740]/15"
+                            : "bg-[#00e676]/15"
+                        }`}
+                      >
+                        {c.type === "place" ? "📍" : c.type === "blog" ? "📝" : "🛒"}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">
+                            {c.customer_name}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] ${
+                              c.active
+                                ? "bg-[#00e676]/15 text-[#00e676]"
+                                : "bg-[#ff5252]/15 text-[#ff5252]"
+                            }`}
+                          >
+                            {c.active ? "활성" : "비활성"}
+                          </span>
+                          {c.engage_like ? (
+                            <span className="rounded-full bg-[#ff6eb4]/15 text-[#ff6eb4] px-2 py-0.5 text-[10px]">
+                              👍 공감ON
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-xs text-[#8888aa]">
+                          <span className="text-[#e0e0e0]">{c.keyword}</span>
+                          {" · "}
+                          일일 {c.daily_target}회
+                          {" · "}
+                          체류 {c.dwell_time_min}~{c.dwell_time_max}초
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-white">
-                          {c.customer_name}
-                        </span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] ${
-                            c.active
-                              ? "bg-[#00e676]/15 text-[#00e676]"
-                              : "bg-[#ff5252]/15 text-[#ff5252]"
-                          }`}
-                        >
-                          {c.active ? "활성" : "비활성"}
-                        </span>
-                      </div>
-                      <div className="text-xs text-[#8888aa]">
-                        <span className="text-[#e0e0e0]">{c.keyword}</span>
-                        {" · "}
-                        {c.product_name}
-                        {" · "}
-                        일일 {c.daily_target}회
-                        {" · "}
-                        체류 {c.dwell_time_min}~{c.dwell_time_max}초
-                      </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#8888aa] mr-2">
+                        {isExpanded ? "▲ 접기" : "▼ 상세"}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleCampaign(c.id, !c.active); }}
+                        className={`rounded-lg border p-2 transition-colors ${
+                          c.active
+                            ? "border-[#ffd740]/30 text-[#ffd740] hover:bg-[#ffd740]/10"
+                            : "border-[#00e676]/30 text-[#00e676] hover:bg-[#00e676]/10"
+                        }`}
+                        title={c.active ? "비활성화" : "활성화"}
+                      >
+                        {c.active ? (
+                          <PowerOff className="h-4 w-4" />
+                        ) : (
+                          <Power className="h-4 w-4" />
+                        )}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteCampaign(c.id); }}
+                        className="rounded-lg border border-[#ff5252]/30 p-2 text-[#ff5252] transition-colors hover:bg-[#ff5252]/10"
+                        title="삭제"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => toggleCampaign(c.id, !c.active)}
-                      className={`rounded-lg border p-2 transition-colors ${
-                        c.active
-                          ? "border-[#ffd740]/30 text-[#ffd740] hover:bg-[#ffd740]/10"
-                          : "border-[#00e676]/30 text-[#00e676] hover:bg-[#00e676]/10"
-                      }`}
-                      title={c.active ? "비활성화" : "활성화"}
-                    >
-                      {c.active ? (
-                        <PowerOff className="h-4 w-4" />
-                      ) : (
-                        <Power className="h-4 w-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => deleteCampaign(c.id)}
-                      className="rounded-lg border border-[#ff5252]/30 p-2 text-[#ff5252] transition-colors hover:bg-[#ff5252]/10"
-                      title="삭제"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {/* Expanded Detail */}
+                  {isExpanded && (
+                    <div className="mt-1 rounded-lg border border-[#448aff]/30 bg-[#0d0d25] p-5 space-y-5">
+                      {/* Settings Grid */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-[#448aff] mb-3">캠페인 설정</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <DetailCard label="캠페인 ID" value={`#${c.id}`} />
+                          <DetailCard label="타입" value={c.type === "blog" ? "📝 블로그" : c.type === "place" ? "📍 플레이스" : "🛒 쇼핑"} />
+                          <DetailCard label="고객명" value={c.customer_name} />
+                          <DetailCard label="키워드" value={c.keyword} highlight />
+                          <DetailCard label="블로그명/상품명" value={c.product_name} />
+                          <DetailCard label="URL" value={c.product_url || "-"} small />
+                          <DetailCard label="일일 목표" value={`${c.daily_target}회`} highlight />
+                          <DetailCard label="체류시간" value={`${c.dwell_time_min}~${c.dwell_time_max}초`} />
+                          <DetailCard label="상태" value={c.active ? "✅ 활성" : "⛔ 비활성"} />
+                          <DetailCard label="공감" value={c.engage_like ? "👍 ON" : "OFF"} highlight={!!c.engage_like} />
+                          <DetailCard label="등록일" value={c.created_at?.split(" ")[0] || "-"} />
+                        </div>
+                      </div>
+
+                      {/* Hourly Schedule Chart */}
+                      <div>
+                        <h3 className="text-sm font-semibold text-[#448aff] mb-3">
+                          시간대별 트래픽 스케줄 (24시간)
+                        </h3>
+                        <div className="rounded-lg bg-[#0a0a1a] p-4">
+                          <div className="flex h-28 items-end gap-[3px]">
+                            {Array.from({ length: 24 }, (_, h) => {
+                              const w = weights[h] || 0;
+                              const pct = (w / maxWeight) * 100;
+                              const jobs = hourDist[h] || 0;
+                              const isActive = w > 0.5;
+                              return (
+                                <div key={h} className="group relative flex-1 h-full flex flex-col items-center justify-end">
+                                  {/* Tooltip */}
+                                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 whitespace-nowrap rounded bg-[#222] px-2 py-1 text-[10px] text-white shadow-lg">
+                                    {h}시: 가중치 {w.toFixed(2)}{jobs > 0 && ` · ${jobs}건 배정`}
+                                  </div>
+                                  <div
+                                    className={`w-full rounded-t transition-all ${
+                                      jobs > 0
+                                        ? "bg-[#00e676]"
+                                        : isActive
+                                        ? "bg-[#448aff]/60 hover:bg-[#448aff]"
+                                        : "bg-[#2a2a5a]/40"
+                                    }`}
+                                    style={{ height: `${Math.max(pct, 2)}%` }}
+                                  />
+                                  {jobs > 0 && (
+                                    <span className="mt-0.5 text-[8px] font-bold text-[#00e676]">{jobs}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-1 flex justify-between text-[10px] text-[#555]">
+                            {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
+                              <span key={h}>{h}시</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#8888aa]">
+                          <span className="flex items-center gap-1">
+                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#00e676]" /> 잡 배정됨
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#448aff]/60" /> 가중치만 있음
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#2a2a5a]/40" /> 비활성 시간대
+                          </span>
+                          <span className="ml-auto text-[#e0e0e0]">
+                            주요 시간대: {sortedHours.filter(s => s.w >= 1.0).map(s => `${s.h}시`).join(", ") || "없음"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       </main>
     </>
+  );
+}
+
+function DetailCard({
+  label,
+  value,
+  highlight = false,
+  small = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-[#2a2a5a]/50 bg-[#111127] px-3 py-2">
+      <div className="text-[10px] text-[#8888aa] mb-0.5">{label}</div>
+      <div
+        className={`${small ? "text-[11px] break-all" : "text-sm"} ${
+          highlight ? "text-[#00e676] font-semibold" : "text-white"
+        }`}
+      >
+        {value}
+      </div>
+    </div>
   );
 }

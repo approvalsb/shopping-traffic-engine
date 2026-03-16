@@ -108,6 +108,7 @@ class TrafficWorker:
         start = datetime.now()
 
         if job_type == "blog":
+            do_like = bool(job.get("engage_like", 0))
             engine = NaverBlogEngine(proxy=self.proxy, headless=self.headless)
             campaign = BlogCampaign(
                 keyword=job["keyword"],
@@ -116,6 +117,8 @@ class TrafficWorker:
                 daily_target=1,
                 dwell_time_min=job.get("dwell_time_min", 20.0),
                 dwell_time_max=job.get("dwell_time_max", 45.0),
+                logged_in=do_like,
+                engage_like=do_like,
             )
         elif job_type == "place":
             engine = NaverPlaceEngine(proxy=self.proxy, headless=self.headless)

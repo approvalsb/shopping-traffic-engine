@@ -117,6 +117,14 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add engage_like column
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN engage_like INTEGER DEFAULT 0")
+        conn.commit()
+        log.info("Added engage_like column to campaigns")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Tracking table for rank monitoring
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS tracking (
@@ -144,7 +152,8 @@ def init_db():
 
 def add_campaign(customer_name, keyword, product_name, product_url="",
                  daily_target=300, dwell_min=30.0, dwell_max=90.0,
-                 campaign_type="shopping", hourly_weights=None) -> int:
+                 campaign_type="shopping", hourly_weights=None,
+                 engage_like=False) -> int:
     conn = get_db()
     # Auto-assign default weights based on campaign type if not provided
     if hourly_weights is None:
@@ -157,10 +166,10 @@ def add_campaign(customer_name, keyword, product_name, product_url="",
     cur = conn.execute(
         """INSERT INTO campaigns
            (type, customer_name, keyword, product_name, product_url,
-            daily_target, dwell_time_min, dwell_time_max, hourly_weights)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            daily_target, dwell_time_min, dwell_time_max, hourly_weights, engage_like)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (campaign_type, customer_name, keyword, product_name, product_url,
-         daily_target, dwell_min, dwell_max, weights_json),
+         daily_target, dwell_min, dwell_max, weights_json, int(engage_like)),
     )
     conn.commit()
     cid = cur.lastrowid
@@ -302,7 +311,7 @@ def fetch_next_jobs(worker_id: str, batch_size: int = 5) -> list[dict]:
     rows = conn.execute(
         """SELECT j.id, j.campaign_id, j.scheduled_date, j.scheduled_hour,
                   c.type, c.keyword, c.product_name, c.product_url,
-                  c.dwell_time_min, c.dwell_time_max
+                  c.dwell_time_min, c.dwell_time_max, c.engage_like
            FROM jobs j
            JOIN campaigns c ON j.campaign_id = c.id
            WHERE j.status = 'pending'
