@@ -112,6 +112,18 @@ def update_campaign(cid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/campaigns/bulk-update", methods=["POST"])
+def bulk_update_campaigns():
+    data = request.json
+    customer_name = data.get("customer_name")
+    fields = data.get("fields", {})
+    if not customer_name or not fields:
+        return jsonify({"error": "customer_name and fields required"}), 400
+    count = db.bulk_update_by_customer(customer_name, **fields)
+    log.info("Bulk updated %d campaigns for customer '%s': %s", count, customer_name, list(fields.keys()))
+    return jsonify({"ok": True, "updated": count})
+
+
 @app.route("/api/campaigns/<int:cid>", methods=["DELETE"])
 def delete_campaign(cid):
     db.delete_campaign(cid)

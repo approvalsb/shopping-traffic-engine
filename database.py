@@ -241,6 +241,28 @@ def update_campaign(campaign_id: int, **fields):
     conn.close()
 
 
+def bulk_update_by_customer(customer_name: str, **fields) -> int:
+    """Update fields for all campaigns belonging to a customer. Returns count updated."""
+    allowed = {
+        "type", "daily_target", "dwell_time_min", "dwell_time_max",
+        "options", "hourly_weights", "engage_like",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return 0
+    for k in ("options", "hourly_weights"):
+        if k in updates and not isinstance(updates[k], str):
+            updates[k] = json.dumps(updates[k])
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [customer_name]
+    conn = get_db()
+    cur = conn.execute(f"UPDATE campaigns SET {set_clause} WHERE customer_name = ?", values)
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 def update_campaign_weights(campaign_id: int, weights: dict | str):
     """Update hourly_weights for a campaign. Accepts dict or JSON string."""
     if isinstance(weights, dict):

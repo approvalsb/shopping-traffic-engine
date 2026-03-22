@@ -121,6 +121,49 @@ export default function CampaignsPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [bulkCustomer, setBulkCustomer] = useState<string | null>(null);
+  const [bulkType, setBulkType] = useState("blog");
+  const [bulkOptions, setBulkOptions] = useState<Record<string, boolean>>({});
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+
+  const startBulkEdit = (customerName: string, campaigns: Campaign[]) => {
+    const firstType = campaigns[0]?.type || "blog";
+    // Pre-fill with options from first campaign that has any
+    const existing: Record<string, boolean> = {};
+    for (const c of campaigns) {
+      const opts = parseOptions(c.options);
+      if (opts.length > 0) {
+        opts.forEach((k) => { existing[k] = true; });
+        break;
+      }
+    }
+    setBulkType(firstType);
+    setBulkOptions(existing);
+    setBulkCustomer(customerName);
+  };
+
+  const handleBulkSubmit = async () => {
+    if (!bulkCustomer) return;
+    setBulkSubmitting(true);
+    try {
+      const selectedOpts = Object.entries(bulkOptions).filter(([, v]) => v).map(([k]) => k);
+      const res = await fetch("/api/campaigns/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: bulkCustomer,
+          fields: { options: selectedOpts },
+        }),
+      });
+      if (res.ok) {
+        setBulkCustomer(null);
+        setBulkOptions({});
+        fetchCampaigns();
+      }
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -557,9 +600,17 @@ export default function CampaignsPage() {
                             </div>
                           </div>
                         </div>
-                        <span className="text-xs text-[#8888aa]">
-                          {isCustomerOpen ? "▲ 접기" : "▼ 펼치기"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); startBulkEdit(customerName, customerCampaigns); }}
+                            className="rounded-lg border border-[#448aff]/30 px-3 py-1.5 text-[11px] font-semibold text-[#448aff] transition-colors hover:bg-[#448aff]/10"
+                          >
+                            전체 설정
+                          </button>
+                          <span className="text-xs text-[#8888aa]">
+                            {isCustomerOpen ? "▲ 접기" : "▼ 펼치기"}
+                          </span>
+                        </div>
                       </button>
 
                       {/* Customer's campaigns */}
@@ -802,6 +853,116 @@ export default function CampaignsPage() {
           )}
         </div>
       </main>
+
+      {/* Bulk Edit Modal */}
+      {bulkCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setBulkCustomer(null)}>
+          <div className="mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[#2a2a5a] bg-[#111127] p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">
+                {bulkCustomer} — 전체 옵션 설정
+              </h2>
+              <button onClick={() => setBulkCustomer(null)} className="text-[#8888aa] hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-4 text-xs text-[#8888aa]">
+              선택한 옵션이 이 고객의 <strong>모든 캠페인</strong>에 일괄 적용됩니다.
+            </p>
+
+            {/* Type filter for showing relevant options */}
+            <div className="mb-4">
+              <label className="mb-1 block text-xs text-[#8888aa]">옵션 필터 (캠페인 타입)</label>
+              <div className="flex gap-2">
+                {[
+                  { value: "shopping", label: "🛒 쇼핑" },
+                  { value: "place", label: "📍 플레이스" },
+                  { value: "blog", label: "📝 블로그" },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setBulkType(opt.value)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                      bulkType === opt.value
+                        ? "border-[#00e676] bg-[#00e676]/10 text-[#00e676]"
+                        : "border-[#2a2a5a] text-[#8888aa] hover:border-[#448aff]"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Options grid */}
+            <div className="grid gap-2 md:grid-cols-2">
+              {paidOptions
+                .filter((o) => !o.typeOnly || o.typeOnly === bulkType)
+                .map((opt) => {
+                  const checked = !!bulkOptions[opt.key];
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setBulkOptions({ ...bulkOptions, [opt.key]: !checked })}
+                      className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                        checked
+                          ? "border-[#00e676]/50 bg-[#00e676]/[0.06]"
+                          : "border-[#2a2a5a] bg-[#0a0a1a] hover:border-[#448aff]/40"
+                      }`}
+                    >
+                      <div className="text-xl">{opt.icon}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs font-bold ${checked ? "text-[#00e676]" : "text-white"}`}>{opt.name}</span>
+                          {opt.layer && (
+                            <span className="rounded px-1 py-0.5 text-[9px] font-bold" style={{ color: opt.color, background: `${opt.color}15` }}>{opt.layer}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-[#8888aa] truncate">{opt.desc}</div>
+                      </div>
+                      <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                        checked ? "border-[#00e676] bg-[#00e676] text-black" : "border-[#555]"
+                      }`}>
+                        {checked && <span className="text-xs">✓</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+
+            {/* Selected summary */}
+            {Object.values(bulkOptions).some(Boolean) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#8888aa]">
+                <span>선택됨:</span>
+                {paidOptions.filter((o) => bulkOptions[o.key]).map((o) => (
+                  <span key={o.key} className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: o.color, background: `${o.color}15` }}>
+                    {o.icon} {o.name}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setBulkCustomer(null)}
+                className="rounded-lg border border-[#2a2a5a] px-4 py-2 text-sm text-[#8888aa] hover:text-white"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleBulkSubmit}
+                disabled={bulkSubmitting}
+                className="rounded-lg bg-[#448aff] px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#2979ff] disabled:opacity-50"
+              >
+                {bulkSubmitting ? "적용 중..." : "전체 캠페인에 적용"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
