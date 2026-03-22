@@ -2,17 +2,23 @@ const MASTER_URL = process.env.MASTER_URL || "http://localhost:5000";
 
 export async function fetchMaster(path: string, options?: RequestInit) {
   const url = `${MASTER_URL}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Master API error: ${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Master API error: ${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`fetchMaster(${url}): ${msg}`);
   }
-  return res.json();
 }
 
 export interface Campaign {

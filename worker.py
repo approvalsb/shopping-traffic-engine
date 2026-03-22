@@ -22,6 +22,7 @@ import requests
 from engine_selenium import NaverShoppingEngine, Campaign
 from engine_place import NaverPlaceEngine, PlaceCampaign
 from engine_blog import NaverBlogEngine, BlogCampaign
+from proxy_pool import ProxyPool
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -38,12 +39,14 @@ class TrafficWorker:
 
     def __init__(self, master_url: str, worker_id: str,
                  max_chrome: int = 8, headless: bool = True,
-                 proxy: str = None, poll_interval: float = 10.0):
+                 proxy: str = None, poll_interval: float = 10.0,
+                 proxy_pool: ProxyPool = None):
         self.master_url = master_url.rstrip("/")
         self.worker_id = worker_id
         self.max_chrome = max_chrome
         self.headless = headless
         self.proxy = proxy
+        self.proxy_pool = proxy_pool
         self.poll_interval = poll_interval
         self.hostname = socket.gethostname()
         self._running = False
@@ -102,14 +105,35 @@ class TrafficWorker:
         except Exception as e:
             log.warning("Failed to report result for job %d: %s", job_id, e)
 
+    def _get_proxy(self) -> str:
+        """Get proxy for this job: rotate from pool, or use static proxy.
+        Returns proxy string compatible with Chrome --proxy-server flag.
+        For authenticated proxies, returns http://user:pass@host:port format.
+        """
+        if self.proxy_pool and self.proxy_pool.count > 0:
+            p = self.proxy_pool.get_next()
+            if p:
+                server = p["server"]
+                # Build authenticated proxy URL if credentials exist
+                if p.get("username") and p.get("password"):
+                    # http://host:port -> http://user:pass@host:port
+                    proto, rest = server.split("://", 1) if "://" in server else ("http", server)
+                    proxy_url = f"{proto}://{p['username']}:{p['password']}@{rest}"
+                    log.info("Proxy rotation: %s (authenticated)", server)
+                    return proxy_url
+                log.info("Proxy rotation: %s", server)
+                return server
+        return self.proxy
+
     def execute_job(self, job: dict) -> bool:
         """Execute a single traffic visit job (shopping or place)."""
         job_type = job.get("type", "shopping")
         start = datetime.now()
+        proxy = self._get_proxy()
 
         if job_type == "blog":
             do_like = bool(job.get("engage_like", 0))
-            engine = NaverBlogEngine(proxy=self.proxy, headless=self.headless)
+            engine = NaverBlogEngine(proxy=proxy, headless=self.headless)
             campaign = BlogCampaign(
                 keyword=job["keyword"],
                 blog_title=job["product_name"],
@@ -121,7 +145,7 @@ class TrafficWorker:
                 engage_like=do_like,
             )
         elif job_type == "place":
-            engine = NaverPlaceEngine(proxy=self.proxy, headless=self.headless)
+            engine = NaverPlaceEngine(proxy=proxy, headless=self.headless)
             campaign = PlaceCampaign(
                 keyword=job["keyword"],
                 place_name=job["product_name"],
@@ -130,7 +154,7 @@ class TrafficWorker:
                 dwell_time_max=job.get("dwell_time_max", 45.0),
             )
         else:
-            engine = NaverShoppingEngine(proxy=self.proxy, headless=self.headless)
+            engine = NaverShoppingEngine(proxy=proxy, headless=self.headless)
             campaign = Campaign(
                 product_url=job.get("product_url", ""),
                 keyword=job["keyword"],
@@ -251,7 +275,26 @@ def main():
     parser.add_argument("--no-headless", action="store_true",
                         help="Disable headless mode (for local debugging)")
     parser.add_argument("--proxy", default=os.environ.get("PROXY"),
-                        help="Proxy server (host:port)")
+                        help="Static proxy server (host:port)")
+    parser.add_argument("--proxy-provider", default=os.environ.get("PROXY_PROVIDER"),
+                        choices=["brightdata", "oxylabs", "smartproxy", "generic"],
+                        help="Rotating proxy provider name")
+    parser.add_argument("--proxy-host", default=os.environ.get("PROXY_HOST"),
+                        help="Rotating proxy host (e.g. brd.superproxy.io)")
+    parser.add_argument("--proxy-port", type=int,
+                        default=int(os.environ.get("PROXY_PORT", "22225")),
+                        help="Rotating proxy port (default: 22225)")
+    parser.add_argument("--proxy-user", default=os.environ.get("PROXY_USER"),
+                        help="Rotating proxy username")
+    parser.add_argument("--proxy-pass", default=os.environ.get("PROXY_PASS"),
+                        help="Rotating proxy password")
+    parser.add_argument("--proxy-country", default=os.environ.get("PROXY_COUNTRY", "kr"),
+                        help="Proxy country code (default: kr)")
+    parser.add_argument("--proxy-sessions", type=int,
+                        default=int(os.environ.get("PROXY_SESSIONS", "20")),
+                        help="Number of rotating proxy sessions (default: 20)")
+    parser.add_argument("--proxy-file", default=os.environ.get("PROXY_FILE"),
+                        help="Path to proxy list file")
     parser.add_argument("--poll", type=float,
                         default=float(os.environ.get("POLL_INTERVAL", "10.0")),
                         help="Poll interval seconds (default: 10)")
@@ -262,6 +305,24 @@ def main():
 
     worker_id = args.id or f"worker-{socket.gethostname()}-{random.randint(1000, 9999)}"
 
+    # Build proxy pool if configured
+    proxy_pool = None
+    if args.proxy_provider and args.proxy_host and args.proxy_user and args.proxy_pass:
+        proxy_pool = ProxyPool.from_rotating_service(
+            provider=args.proxy_provider,
+            host=args.proxy_host,
+            port=args.proxy_port,
+            username=args.proxy_user,
+            password=args.proxy_pass,
+            country=args.proxy_country,
+            sessions=args.proxy_sessions,
+        )
+        log.info("Proxy pool: %s (%d sessions, country=%s)",
+                 args.proxy_provider, proxy_pool.count, args.proxy_country)
+    elif args.proxy_file:
+        proxy_pool = ProxyPool.from_file(args.proxy_file)
+        log.info("Proxy pool: %d proxies from %s", proxy_pool.count, args.proxy_file)
+
     worker = TrafficWorker(
         master_url=args.master,
         worker_id=worker_id,
@@ -269,6 +330,7 @@ def main():
         headless=args.headless,
         proxy=args.proxy,
         poll_interval=args.poll,
+        proxy_pool=proxy_pool,
     )
 
     worker.run()

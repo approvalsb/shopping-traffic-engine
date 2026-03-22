@@ -125,6 +125,14 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add options column (JSON array of paid option keys)
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN options TEXT DEFAULT '[]'")
+        conn.commit()
+        log.info("Added options column to campaigns")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Tracking table for rank monitoring
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS tracking (
@@ -153,7 +161,7 @@ def init_db():
 def add_campaign(customer_name, keyword, product_name, product_url="",
                  daily_target=300, dwell_min=30.0, dwell_max=90.0,
                  campaign_type="shopping", hourly_weights=None,
-                 engage_like=False) -> int:
+                 engage_like=False, options=None) -> int:
     conn = get_db()
     # Auto-assign default weights based on campaign type if not provided
     if hourly_weights is None:
@@ -163,13 +171,14 @@ def add_campaign(customer_name, keyword, product_name, product_url="",
         weights_json = json.dumps(hourly_weights)
     else:
         weights_json = hourly_weights  # already a JSON string
+    options_json = json.dumps(options or [])
     cur = conn.execute(
         """INSERT INTO campaigns
            (type, customer_name, keyword, product_name, product_url,
-            daily_target, dwell_time_min, dwell_time_max, hourly_weights, engage_like)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            daily_target, dwell_time_min, dwell_time_max, hourly_weights, engage_like, options)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (campaign_type, customer_name, keyword, product_name, product_url,
-         daily_target, dwell_min, dwell_max, weights_json, int(engage_like)),
+         daily_target, dwell_min, dwell_max, weights_json, int(engage_like), options_json),
     )
     conn.commit()
     cid = cur.lastrowid
@@ -210,6 +219,28 @@ def delete_campaign(campaign_id: int):
     conn.close()
 
 
+def update_campaign(campaign_id: int, **fields):
+    """Update arbitrary campaign fields. Only provided keys are updated."""
+    allowed = {
+        "type", "customer_name", "keyword", "product_name", "product_url",
+        "daily_target", "dwell_time_min", "dwell_time_max", "options",
+        "hourly_weights", "engage_like",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    # Serialize list/dict fields to JSON
+    for k in ("options", "hourly_weights"):
+        if k in updates and not isinstance(updates[k], str):
+            updates[k] = json.dumps(updates[k])
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [campaign_id]
+    conn = get_db()
+    conn.execute(f"UPDATE campaigns SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+
+
 def update_campaign_weights(campaign_id: int, weights: dict | str):
     """Update hourly_weights for a campaign. Accepts dict or JSON string."""
     if isinstance(weights, dict):
@@ -223,27 +254,46 @@ def update_campaign_weights(campaign_id: int, weights: dict | str):
 # --- Job scheduling ---
 
 def _distribute_visits(daily_target: int, weights: dict[int, float] | None = None) -> dict[int, int]:
-    """Distribute daily visits across 24 hours based on traffic patterns."""
+    """Distribute daily visits across 24 hours based on traffic patterns.
+    For small targets (<=24), uses weighted random selection of hours.
+    For larger targets, uses proportional distribution with ±20% jitter.
+    """
     import random
     if weights is None:
         weights = HOURLY_WEIGHTS
     total_weight = sum(weights.values())
-    distribution = {}
-    remaining = daily_target
+    distribution = {h: 0 for h in range(24)}
 
-    hours = list(range(24))
-    random.shuffle(hours)
-
-    for i, hour in enumerate(hours):
-        if i == len(hours) - 1:
-            distribution[hour] = remaining
-        else:
-            weight = weights.get(hour, 0.5)
-            base = daily_target * (weight / total_weight)
-            count = max(0, int(base * random.uniform(0.8, 1.2)))
-            count = min(count, remaining)
-            distribution[hour] = count
-            remaining -= count
+    if daily_target <= 24:
+        # Small target: weighted random pick of hours (natural spread)
+        hour_pool = [(h, weights.get(h, 0.5)) for h in range(24)]
+        for _ in range(daily_target):
+            total_w = sum(w for _, w in hour_pool)
+            r = random.uniform(0, total_w)
+            cumulative = 0
+            for idx, (h, w) in enumerate(hour_pool):
+                cumulative += w
+                if cumulative >= r:
+                    distribution[h] += 1
+                    hour_pool.pop(idx)  # avoid same hour twice (until exhausted)
+                    break
+            if not hour_pool:
+                hour_pool = [(h, weights.get(h, 0.5)) for h in range(24)]
+    else:
+        # Large target: proportional distribution with jitter
+        remaining = daily_target
+        hours = list(range(24))
+        random.shuffle(hours)
+        for i, hour in enumerate(hours):
+            if i == len(hours) - 1:
+                distribution[hour] = remaining
+            else:
+                weight = weights.get(hour, 0.5)
+                base = daily_target * (weight / total_weight)
+                count = max(0, int(base * random.uniform(0.8, 1.2)))
+                count = min(count, remaining)
+                distribution[hour] = count
+                remaining -= count
 
     return distribution
 
@@ -269,8 +319,10 @@ def generate_daily_jobs(target_date: str = None):
     campaigns = list_campaigns(active_only=True)
     total_jobs = 0
 
+    # Collect all individual jobs first (campaign_id, weights)
+    import random
+    all_jobs = []  # list of (campaign_id, weights_dict)
     for camp in campaigns:
-        # Parse per-campaign hourly weights, fall back to global default
         camp_weights = None
         raw_weights = camp.get("hourly_weights")
         if raw_weights:
@@ -279,18 +331,44 @@ def generate_daily_jobs(target_date: str = None):
                 camp_weights = {int(k): float(v) for k, v in parsed.items()}
             except (json.JSONDecodeError, ValueError):
                 log.warning("Invalid hourly_weights for campaign #%d, using default", camp["id"])
-        dist = _distribute_visits(camp["daily_target"], weights=camp_weights)
-        for hour, count in dist.items():
-            if count <= 0:
-                continue
-            # Create one job per visit
-            for _ in range(count):
-                conn.execute(
-                    """INSERT INTO jobs (campaign_id, scheduled_date, scheduled_hour, status)
-                       VALUES (?, ?, ?, 'pending')""",
-                    (camp["id"], target_date, hour),
-                )
-                total_jobs += 1
+        camp_type = camp.get("type", "shopping")
+        weights = camp_weights or DEFAULT_WEIGHTS_BY_TYPE.get(camp_type, HOURLY_WEIGHTS)
+        for _ in range(camp["daily_target"]):
+            all_jobs.append((camp["id"], weights))
+
+    # Shuffle all jobs, then assign each to a weighted-random hour
+    # Track how many jobs per hour to avoid overloading single hours
+    random.shuffle(all_jobs)
+    hour_counts = {h: 0 for h in range(24)}
+    max_per_hour = max(2, len(all_jobs) // 8)  # soft cap per hour
+
+    for campaign_id, weights in all_jobs:
+        # Build weighted pool, penalizing hours that already have many jobs
+        pool = []
+        for h in range(24):
+            w = weights.get(h, 0.5)
+            # Reduce weight for hours already loaded
+            if hour_counts[h] >= max_per_hour:
+                w *= 0.1
+            pool.append((h, w))
+
+        total_w = sum(w for _, w in pool)
+        r = random.uniform(0, total_w)
+        cumulative = 0
+        chosen_hour = 12  # fallback
+        for h, w in pool:
+            cumulative += w
+            if cumulative >= r:
+                chosen_hour = h
+                break
+
+        conn.execute(
+            """INSERT INTO jobs (campaign_id, scheduled_date, scheduled_hour, status)
+               VALUES (?, ?, ?, 'pending')""",
+            (campaign_id, target_date, chosen_hour),
+        )
+        hour_counts[chosen_hour] += 1
+        total_jobs += 1
 
     conn.commit()
     conn.close()
@@ -411,6 +489,21 @@ def heartbeat_worker(worker_id: str):
     )
     conn.commit()
     conn.close()
+
+
+def cleanup_stale_workers(timeout_minutes: int = 5):
+    """Delete workers that haven't sent a heartbeat recently."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(minutes=timeout_minutes)).isoformat()
+    conn = get_db()
+    deleted = conn.execute(
+        "DELETE FROM workers WHERE last_heartbeat < ?",
+        (cutoff,),
+    ).rowcount
+    conn.commit()
+    conn.close()
+    if deleted > 0:
+        log.info("Cleaned up %d stale workers", deleted)
 
 
 def list_workers() -> list[dict]:

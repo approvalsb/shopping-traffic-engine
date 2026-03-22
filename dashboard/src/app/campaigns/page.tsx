@@ -12,6 +12,7 @@ import {
   MapPin,
   FileText,
   X,
+  Pencil,
 } from "lucide-react";
 
 interface Campaign {
@@ -28,6 +29,7 @@ interface Campaign {
   created_at: string;
   hourly_weights?: string;
   engage_like?: number;
+  options?: string[];
 }
 
 const paidOptions = [
@@ -67,6 +69,36 @@ const paidOptions = [
   { key: "season_campaign", name: "시즌 캠페인", price: "+15만/회", icon: "🎯", layer: "", desc: "특정 기간 집중 + 전후 비교 리포트", color: "#ff9052" },
 ];
 
+// L2/L3 option keys for layer detection
+const L2_KEYS = new Set(paidOptions.filter((o) => o.layer === "L2").map((o) => o.key));
+const L3_KEYS = new Set(paidOptions.filter((o) => o.layer === "L3").map((o) => o.key));
+
+function parseOptions(opts?: string[] | string): string[] {
+  if (!opts) return [];
+  if (typeof opts === "string") {
+    try { return JSON.parse(opts); } catch { return []; }
+  }
+  return opts;
+}
+
+function getActiveLayers(opts?: string[] | string): { l1: boolean; l2: boolean; l3: boolean } {
+  const parsed = parseOptions(opts);
+  const l2 = parsed.some((k) => L2_KEYS.has(k));
+  const l3 = parsed.some((k) => L3_KEYS.has(k));
+  return { l1: true, l2, l3 }; // L1 is always active
+}
+
+function LayerBadges({ options }: { options?: string[] | string }) {
+  const layers = getActiveLayers(options);
+  return (
+    <span className="inline-flex gap-1">
+      <span className="rounded px-1.5 py-0.5 text-[9px] font-extrabold text-black bg-[#00e676]">L1</span>
+      <span className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold ${layers.l2 ? "text-black bg-[#ff9052]" : "text-[#555] bg-[#2a2a5a]"}`}>L2</span>
+      <span className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold ${layers.l3 ? "text-black bg-[#448aff]" : "text-[#555] bg-[#2a2a5a]"}`}>L3</span>
+    </span>
+  );
+}
+
 const defaultForm = {
   type: "shopping",
   customer_name: "",
@@ -87,6 +119,8 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const fetchCampaigns = useCallback(async () => {
     try {
@@ -106,30 +140,53 @@ export default function CampaignsPage() {
     fetchCampaigns();
   }, [fetchCampaigns]);
 
+  const startEdit = (c: Campaign) => {
+    const opts: Record<string, boolean> = {};
+    parseOptions(c.options).forEach((k) => { opts[k] = true; });
+    setForm({
+      type: c.type,
+      customer_name: c.customer_name,
+      keyword: c.keyword,
+      product_name: c.product_name,
+      product_url: c.product_url,
+      daily_target: c.daily_target,
+      dwell_time_min: c.dwell_time_min,
+      dwell_time_max: c.dwell_time_max,
+      preset: "natural",
+      options: opts,
+    });
+    setEditingId(c.id);
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    const payload = {
+      type: form.type,
+      customer_name: form.customer_name,
+      keyword: form.keyword,
+      product_name: form.product_name,
+      product_url: form.product_url,
+      daily_target: form.daily_target,
+      dwell_time_min: form.dwell_time_min,
+      dwell_time_max: form.dwell_time_max,
+      options: Object.entries(form.options)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
+    };
     try {
-      const res = await fetch("/api/campaigns", {
-        method: "POST",
+      const url = editingId ? `/api/campaigns/${editingId}` : "/api/campaigns";
+      const method = editingId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: form.type,
-          customer_name: form.customer_name,
-          keyword: form.keyword,
-          product_name: form.product_name,
-          product_url: form.product_url,
-          daily_target: form.daily_target,
-          dwell_time_min: form.dwell_time_min,
-          dwell_time_max: form.dwell_time_max,
-          options: Object.entries(form.options)
-            .filter(([, v]) => v)
-            .map(([k]) => k),
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setForm(defaultForm);
         setShowForm(false);
+        setEditingId(null);
         fetchCampaigns();
       }
     } finally {
@@ -161,7 +218,7 @@ export default function CampaignsPage() {
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-white">캠페인 관리</h1>
           <button
-            onClick={() => setShowForm(!showForm)}
+            onClick={() => { setShowForm(!showForm); if (showForm) { setEditingId(null); setForm(defaultForm); } }}
             className="flex items-center gap-1.5 rounded-lg bg-[#00e676] px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#00c853]"
           >
             {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
@@ -176,7 +233,7 @@ export default function CampaignsPage() {
             className="mb-8 rounded-xl border border-[#2a2a5a] bg-[#111127] p-6"
           >
             <h2 className="mb-4 text-lg font-semibold text-white">
-              새 캠페인 등록
+              {editingId ? `캠페인 수정 (#${editingId})` : "새 캠페인 등록"}
             </h2>
             <div className="grid gap-4 md:grid-cols-2">
               {/* Campaign Type */}
@@ -430,13 +487,13 @@ export default function CampaignsPage() {
                 disabled={submitting}
                 className="rounded-lg bg-[#00e676] px-6 py-2 text-sm font-semibold text-black transition-colors hover:bg-[#00c853] disabled:opacity-50"
               >
-                {submitting ? "등록 중..." : "캠페인 등록"}
+                {submitting ? (editingId ? "수정 중..." : "등록 중...") : (editingId ? "캠페인 수정" : "캠페인 등록")}
               </button>
             </div>
           </form>
         )}
 
-        {/* Campaign List */}
+        {/* Campaign List — grouped by customer */}
         <div className="rounded-xl border border-[#2a2a5a] bg-[#111127] p-6">
           <h2 className="mb-4 text-lg font-semibold text-white">
             전체 캠페인 ({campaigns.length})
@@ -451,209 +508,294 @@ export default function CampaignsPage() {
               등록된 캠페인이 없습니다
             </p>
           ) : (
-            <div className="space-y-3">
-              {campaigns.map((c) => {
-                const isExpanded = expandedId === c.id;
-                // Parse hourly weights
-                let weights: Record<number, number> = {};
-                try {
-                  if (c.hourly_weights) {
-                    const parsed = JSON.parse(c.hourly_weights);
-                    weights = Object.fromEntries(
-                      Object.entries(parsed).map(([k, v]) => [Number(k), Number(v)])
-                    );
-                  }
-                } catch { /* ignore */ }
-                const maxWeight = Math.max(...Object.values(weights), 0.01);
-                const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
-
-                // Calculate per-hour job distribution (weighted sampling for small targets)
-                const hourDist: Record<number, number> = {};
-                const sortedHours = Object.entries(weights)
-                  .map(([h, w]) => ({ h: Number(h), w: Number(w) }))
-                  .sort((a, b) => b.w - a.w);
-                if (c.daily_target <= 24) {
-                  // For small targets: assign 1 job each to top N weighted hours
-                  let assigned = 0;
-                  for (const { h } of sortedHours) {
-                    if (assigned >= c.daily_target) break;
-                    hourDist[h] = 1;
-                    assigned++;
-                  }
-                } else {
-                  let remaining = c.daily_target;
-                  for (const { h, w } of sortedHours) {
-                    const jobs = Math.round((w / totalWeight) * c.daily_target);
-                    hourDist[h] = Math.min(jobs, remaining);
-                    remaining -= hourDist[h];
-                  }
+            <div className="space-y-4">
+              {(() => {
+                // Group campaigns by customer
+                const customerMap = new Map<string, Campaign[]>();
+                for (const c of campaigns) {
+                  const list = customerMap.get(c.customer_name) || [];
+                  list.push(c);
+                  customerMap.set(c.customer_name, list);
                 }
+                return Array.from(customerMap.entries()).map(([customerName, customerCampaigns]) => {
+                  const isCustomerOpen = expandedCustomer === customerName;
+                  const activeCount = customerCampaigns.filter((c) => c.active).length;
+                  const totalTarget = customerCampaigns.reduce((s, c) => s + (c.active ? c.daily_target : 0), 0);
+                  const types = Array.from(new Set(customerCampaigns.map((c) => c.type)));
 
-                return (
-                <div key={c.id}>
-                  <div
-                    onClick={() => setExpandedId(isExpanded ? null : c.id)}
-                    className={`flex items-center justify-between rounded-lg border p-4 transition-colors cursor-pointer ${
-                      c.active
-                        ? isExpanded
-                          ? "border-[#448aff] bg-[#16163a]"
-                          : "border-[#2a2a5a] bg-[#16163a]/50 hover:border-[#448aff]/50"
-                        : "border-[#2a2a5a]/50 bg-[#0a0a1a] opacity-60"
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${
-                          c.type === "place"
-                            ? "bg-[#448aff]/15"
-                            : c.type === "blog"
-                            ? "bg-[#ffd740]/15"
-                            : "bg-[#00e676]/15"
+                  return (
+                    <div key={customerName} className="rounded-lg border border-[#2a2a5a] overflow-hidden">
+                      {/* Customer Header */}
+                      <button
+                        onClick={() => setExpandedCustomer(isCustomerOpen ? null : customerName)}
+                        className={`flex w-full items-center justify-between p-4 text-left transition-colors ${
+                          isCustomerOpen ? "bg-[#16163a] border-b border-[#2a2a5a]" : "bg-[#16163a]/50 hover:bg-[#16163a]"
                         }`}
                       >
-                        {c.type === "place" ? "📍" : c.type === "blog" ? "📝" : "🛒"}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-white">
-                            {c.customer_name}
-                          </span>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] ${
-                              c.active
-                                ? "bg-[#00e676]/15 text-[#00e676]"
-                                : "bg-[#ff5252]/15 text-[#ff5252]"
-                            }`}
-                          >
-                            {c.active ? "활성" : "비활성"}
-                          </span>
-                          {c.engage_like ? (
-                            <span className="rounded-full bg-[#ff6eb4]/15 text-[#ff6eb4] px-2 py-0.5 text-[10px]">
-                              👍 공감ON
-                            </span>
-                          ) : null}
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#448aff]/15 text-lg font-bold text-[#448aff]">
+                            {customerName.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-white">{customerName}</span>
+                              <span className="rounded-full bg-[#448aff]/15 px-2 py-0.5 text-[10px] text-[#448aff]">
+                                {customerCampaigns.length}개 캠페인
+                              </span>
+                              {types.map((t) => (
+                                <span key={t} className="text-sm">
+                                  {t === "blog" ? "📝" : t === "place" ? "📍" : "🛒"}
+                                </span>
+                              ))}
+                            </div>
+                            <div className="text-xs text-[#8888aa]">
+                              활성 {activeCount}/{customerCampaigns.length}
+                              {" · "}
+                              일일 {totalTarget}회
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-xs text-[#8888aa]">
-                          <span className="text-[#e0e0e0]">{c.keyword}</span>
-                          {" · "}
-                          일일 {c.daily_target}회
-                          {" · "}
-                          체류 {c.dwell_time_min}~{c.dwell_time_max}초
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#8888aa] mr-2">
-                        {isExpanded ? "▲ 접기" : "▼ 상세"}
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleCampaign(c.id, !c.active); }}
-                        className={`rounded-lg border p-2 transition-colors ${
-                          c.active
-                            ? "border-[#ffd740]/30 text-[#ffd740] hover:bg-[#ffd740]/10"
-                            : "border-[#00e676]/30 text-[#00e676] hover:bg-[#00e676]/10"
-                        }`}
-                        title={c.active ? "비활성화" : "활성화"}
-                      >
-                        {c.active ? (
-                          <PowerOff className="h-4 w-4" />
-                        ) : (
-                          <Power className="h-4 w-4" />
-                        )}
+                        <span className="text-xs text-[#8888aa]">
+                          {isCustomerOpen ? "▲ 접기" : "▼ 펼치기"}
+                        </span>
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteCampaign(c.id); }}
-                        className="rounded-lg border border-[#ff5252]/30 p-2 text-[#ff5252] transition-colors hover:bg-[#ff5252]/10"
-                        title="삭제"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
 
-                  {/* Expanded Detail */}
-                  {isExpanded && (
-                    <div className="mt-1 rounded-lg border border-[#448aff]/30 bg-[#0d0d25] p-5 space-y-5">
-                      {/* Settings Grid */}
-                      <div>
-                        <h3 className="text-sm font-semibold text-[#448aff] mb-3">캠페인 설정</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <DetailCard label="캠페인 ID" value={`#${c.id}`} />
-                          <DetailCard label="타입" value={c.type === "blog" ? "📝 블로그" : c.type === "place" ? "📍 플레이스" : "🛒 쇼핑"} />
-                          <DetailCard label="고객명" value={c.customer_name} />
-                          <DetailCard label="키워드" value={c.keyword} highlight />
-                          <DetailCard label="블로그명/상품명" value={c.product_name} />
-                          <DetailCard label="URL" value={c.product_url || "-"} small />
-                          <DetailCard label="일일 목표" value={`${c.daily_target}회`} highlight />
-                          <DetailCard label="체류시간" value={`${c.dwell_time_min}~${c.dwell_time_max}초`} />
-                          <DetailCard label="상태" value={c.active ? "✅ 활성" : "⛔ 비활성"} />
-                          <DetailCard label="공감" value={c.engage_like ? "👍 ON" : "OFF"} highlight={!!c.engage_like} />
-                          <DetailCard label="등록일" value={c.created_at?.split(" ")[0] || "-"} />
-                        </div>
-                      </div>
+                      {/* Customer's campaigns */}
+                      {isCustomerOpen && (
+                        <div className="space-y-2 p-3 bg-[#0d0d25]">
+                          {customerCampaigns.map((c) => {
+                            const isExpanded = expandedId === c.id;
+                            let weights: Record<number, number> = {};
+                            try {
+                              if (c.hourly_weights) {
+                                const parsed = JSON.parse(c.hourly_weights);
+                                weights = Object.fromEntries(
+                                  Object.entries(parsed).map(([k, v]) => [Number(k), Number(v)])
+                                );
+                              }
+                            } catch { /* ignore */ }
+                            const maxWeight = Math.max(...Object.values(weights), 0.01);
+                            const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
 
-                      {/* Hourly Schedule Chart */}
-                      <div>
-                        <h3 className="text-sm font-semibold text-[#448aff] mb-3">
-                          시간대별 트래픽 스케줄 (24시간)
-                        </h3>
-                        <div className="rounded-lg bg-[#0a0a1a] p-4">
-                          <div className="flex h-28 items-end gap-[3px]">
-                            {Array.from({ length: 24 }, (_, h) => {
-                              const w = weights[h] || 0;
-                              const pct = (w / maxWeight) * 100;
-                              const jobs = hourDist[h] || 0;
-                              const isActive = w > 0.5;
-                              return (
-                                <div key={h} className="group relative flex-1 h-full flex flex-col items-center justify-end">
-                                  {/* Tooltip */}
-                                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 whitespace-nowrap rounded bg-[#222] px-2 py-1 text-[10px] text-white shadow-lg">
-                                    {h}시: 가중치 {w.toFixed(2)}{jobs > 0 && ` · ${jobs}건 배정`}
-                                  </div>
+                            const hourDist: Record<number, number> = {};
+                            const sortedHours = Object.entries(weights)
+                              .map(([h, w]) => ({ h: Number(h), w: Number(w) }))
+                              .sort((a, b) => b.w - a.w);
+                            if (c.daily_target <= 24) {
+                              let assigned = 0;
+                              for (const { h } of sortedHours) {
+                                if (assigned >= c.daily_target) break;
+                                hourDist[h] = 1;
+                                assigned++;
+                              }
+                            } else {
+                              let remaining = c.daily_target;
+                              for (const { h, w } of sortedHours) {
+                                const jobs = Math.round((w / totalWeight) * c.daily_target);
+                                hourDist[h] = Math.min(jobs, remaining);
+                                remaining -= hourDist[h];
+                              }
+                            }
+
+                            return (
+                            <div key={c.id}>
+                              <div
+                                onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                                className={`flex items-center justify-between rounded-lg border p-4 transition-colors cursor-pointer ${
+                                  c.active
+                                    ? isExpanded
+                                      ? "border-[#448aff] bg-[#16163a]"
+                                      : "border-[#2a2a5a] bg-[#16163a]/50 hover:border-[#448aff]/50"
+                                    : "border-[#2a2a5a]/50 bg-[#0a0a1a] opacity-60"
+                                }`}
+                              >
+                                <div className="flex items-center gap-4">
                                   <div
-                                    className={`w-full rounded-t transition-all ${
-                                      jobs > 0
-                                        ? "bg-[#00e676]"
-                                        : isActive
-                                        ? "bg-[#448aff]/60 hover:bg-[#448aff]"
-                                        : "bg-[#2a2a5a]/40"
+                                    className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${
+                                      c.type === "place"
+                                        ? "bg-[#448aff]/15"
+                                        : c.type === "blog"
+                                        ? "bg-[#ffd740]/15"
+                                        : "bg-[#00e676]/15"
                                     }`}
-                                    style={{ height: `${Math.max(pct, 2)}%` }}
-                                  />
-                                  {jobs > 0 && (
-                                    <span className="mt-0.5 text-[8px] font-bold text-[#00e676]">{jobs}</span>
-                                  )}
+                                  >
+                                    {c.type === "place" ? "📍" : c.type === "blog" ? "📝" : "🛒"}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-white">
+                                        {c.keyword}
+                                      </span>
+                                      <span
+                                        className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                          c.active
+                                            ? "bg-[#00e676]/15 text-[#00e676]"
+                                            : "bg-[#ff5252]/15 text-[#ff5252]"
+                                        }`}
+                                      >
+                                        {c.active ? "활성" : "비활성"}
+                                      </span>
+                                      {c.engage_like ? (
+                                        <span className="rounded-full bg-[#ff6eb4]/15 text-[#ff6eb4] px-2 py-0.5 text-[10px]">
+                                          👍 공감ON
+                                        </span>
+                                      ) : null}
+                                      <LayerBadges options={c.options} />
+                                    </div>
+                                    <div className="text-xs text-[#8888aa]">
+                                      <span className="text-[#e0e0e0]">{c.product_name}</span>
+                                      {" · "}
+                                      일일 {c.daily_target}회
+                                      {" · "}
+                                      체류 {c.dwell_time_min}~{c.dwell_time_max}초
+                                    </div>
+                                  </div>
                                 </div>
-                              );
-                            })}
-                          </div>
-                          <div className="mt-1 flex justify-between text-[10px] text-[#555]">
-                            {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
-                              <span key={h}>{h}시</span>
-                            ))}
-                          </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-[#8888aa] mr-2">
+                                    {isExpanded ? "▲ 접기" : "▼ 상세"}
+                                  </span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); startEdit(c); }}
+                                    className="rounded-lg border border-[#448aff]/30 p-2 text-[#448aff] transition-colors hover:bg-[#448aff]/10"
+                                    title="수정"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); toggleCampaign(c.id, !c.active); }}
+                                    className={`rounded-lg border p-2 transition-colors ${
+                                      c.active
+                                        ? "border-[#ffd740]/30 text-[#ffd740] hover:bg-[#ffd740]/10"
+                                        : "border-[#00e676]/30 text-[#00e676] hover:bg-[#00e676]/10"
+                                    }`}
+                                    title={c.active ? "비활성화" : "활성화"}
+                                  >
+                                    {c.active ? (
+                                      <PowerOff className="h-4 w-4" />
+                                    ) : (
+                                      <Power className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); deleteCampaign(c.id); }}
+                                    className="rounded-lg border border-[#ff5252]/30 p-2 text-[#ff5252] transition-colors hover:bg-[#ff5252]/10"
+                                    title="삭제"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Expanded Detail */}
+                              {isExpanded && (
+                                <div className="mt-1 rounded-lg border border-[#448aff]/30 bg-[#0d0d25] p-5 space-y-5">
+                                  <div>
+                                    <h3 className="text-sm font-semibold text-[#448aff] mb-3">캠페인 설정</h3>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                      <DetailCard label="캠페인 ID" value={`#${c.id}`} />
+                                      <DetailCard label="타입" value={c.type === "blog" ? "📝 블로그" : c.type === "place" ? "📍 플레이스" : "🛒 쇼핑"} />
+                                      <DetailCard label="고객명" value={c.customer_name} />
+                                      <DetailCard label="키워드" value={c.keyword} highlight />
+                                      <DetailCard label="블로그명/상품명" value={c.product_name} />
+                                      <DetailCard label="URL" value={c.product_url || "-"} small />
+                                      <DetailCard label="일일 목표" value={`${c.daily_target}회`} highlight />
+                                      <DetailCard label="체류시간" value={`${c.dwell_time_min}~${c.dwell_time_max}초`} />
+                                      <DetailCard label="상태" value={c.active ? "✅ 활성" : "⛔ 비활성"} />
+                                      <DetailCard label="공감" value={c.engage_like ? "👍 ON" : "OFF"} highlight={!!c.engage_like} />
+                                      <DetailCard label="등록일" value={c.created_at?.split(" ")[0] || "-"} />
+                                    </div>
+
+                                    <div className="mt-3 rounded-lg border border-[#2a2a5a]/50 bg-[#111127] p-3">
+                                      <div className="text-[10px] text-[#8888aa] mb-2">적용 레이어</div>
+                                      <div className="flex items-center gap-3">
+                                        <LayerBadges options={c.options} />
+                                        {parseOptions(c.options).length > 0 && (
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {parseOptions(c.options).map((key) => {
+                                              const opt = paidOptions.find((o) => o.key === key);
+                                              if (!opt) return null;
+                                              return (
+                                                <span key={key} className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: opt.color, background: `${opt.color}15` }}>
+                                                  {opt.icon} {opt.name}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                        {parseOptions(c.options).length === 0 && (
+                                          <span className="text-[11px] text-[#555]">L1 기본만 적용 (유료 옵션 없음)</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <h3 className="text-sm font-semibold text-[#448aff] mb-3">
+                                      시간대별 트래픽 스케줄 (24시간)
+                                    </h3>
+                                    <div className="rounded-lg bg-[#0a0a1a] p-4">
+                                      <div className="flex h-28 items-end gap-[3px]">
+                                        {Array.from({ length: 24 }, (_, h) => {
+                                          const w = weights[h] || 0;
+                                          const pct = (w / maxWeight) * 100;
+                                          const jobs = hourDist[h] || 0;
+                                          const isActive = w > 0.5;
+                                          return (
+                                            <div key={h} className="group relative flex-1 h-full flex flex-col items-center justify-end">
+                                              <div className="absolute -top-10 left-1/2 -translate-x-1/2 hidden group-hover:block z-10 whitespace-nowrap rounded bg-[#222] px-2 py-1 text-[10px] text-white shadow-lg">
+                                                {h}시: 가중치 {w.toFixed(2)}{jobs > 0 && ` · ${jobs}건 배정`}
+                                              </div>
+                                              <div
+                                                className={`w-full rounded-t transition-all ${
+                                                  jobs > 0
+                                                    ? "bg-[#00e676]"
+                                                    : isActive
+                                                    ? "bg-[#448aff]/60 hover:bg-[#448aff]"
+                                                    : "bg-[#2a2a5a]/40"
+                                                }`}
+                                                style={{ height: `${Math.max(pct, 2)}%` }}
+                                              />
+                                              {jobs > 0 && (
+                                                <span className="mt-0.5 text-[8px] font-bold text-[#00e676]">{jobs}</span>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                      <div className="mt-1 flex justify-between text-[10px] text-[#555]">
+                                        {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
+                                          <span key={h}>{h}시</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#8888aa]">
+                                      <span className="flex items-center gap-1">
+                                        <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#00e676]" /> 잡 배정됨
+                                      </span>
+                                      <span className="flex items-center gap-1">
+                                        <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#448aff]/60" /> 가중치만 있음
+                                      </span>
+                                      <span className="flex items-center gap-1">
+                                        <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#2a2a5a]/40" /> 비활성 시간대
+                                      </span>
+                                      <span className="ml-auto text-[#e0e0e0]">
+                                        주요 시간대: {sortedHours.filter(s => s.w >= 1.0).map(s => `${s.h}시`).join(", ") || "없음"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            );
+                          })}
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#8888aa]">
-                          <span className="flex items-center gap-1">
-                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#00e676]" /> 잡 배정됨
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#448aff]/60" /> 가중치만 있음
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#2a2a5a]/40" /> 비활성 시간대
-                          </span>
-                          <span className="ml-auto text-[#e0e0e0]">
-                            주요 시간대: {sortedHours.filter(s => s.w >= 1.0).map(s => `${s.h}시`).join(", ") || "없음"}
-                          </span>
-                        </div>
-                      </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           )}
         </div>

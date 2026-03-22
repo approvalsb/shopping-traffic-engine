@@ -98,9 +98,18 @@ def add_campaign():
         dwell_min=data.get("dwell_time_min", 30.0),
         dwell_max=data.get("dwell_time_max", 90.0),
         campaign_type=data.get("type", "shopping"),
+        options=data.get("options", []),
     )
     log.info("Campaign added: #%d %s [%s]", cid, data["customer_name"], data["keyword"])
     return jsonify({"id": cid})
+
+
+@app.route("/api/campaigns/<int:cid>", methods=["PUT"])
+def update_campaign(cid):
+    data = request.json
+    db.update_campaign(cid, **data)
+    log.info("Campaign updated: #%d %s", cid, list(data.keys()))
+    return jsonify({"ok": True})
 
 
 @app.route("/api/campaigns/<int:cid>", methods=["DELETE"])
@@ -156,7 +165,7 @@ def get_schedule():
         """SELECT j.id, j.scheduled_hour, j.status, j.started_at, j.completed_at,
                   j.duration_sec, j.error,
                   c.id as campaign_id, c.type, c.keyword, c.customer_name,
-                  c.product_name, c.engage_like
+                  c.product_name, c.engage_like, c.options
            FROM jobs j
            JOIN campaigns c ON j.campaign_id = c.id
            WHERE j.scheduled_date = ?
@@ -179,6 +188,7 @@ def get_schedule():
             "customer_name": r["customer_name"],
             "product_name": r["product_name"],
             "engage_like": bool(r["engage_like"]),
+            "options": json.loads(r["options"] or "[]"),
             "status": r["status"],
             "started_at": r["started_at"],
             "completed_at": r["completed_at"],
@@ -235,6 +245,8 @@ def get_tracking():
     if not campaign_id:
         campaigns = []
         for cid, data in cache.items():
+            if cid == "strategy":
+                continue
             campaigns.append({
                 "id": int(cid),
                 "customer_name": (data.get("latest") or {}).get("customer_name", f"Campaign {cid}"),
@@ -243,7 +255,7 @@ def get_tracking():
                 "latest_rank": (data.get("latest") or {}).get("rank"),
                 "trend": data.get("trend", "stable"),
             })
-        return jsonify({"campaigns": campaigns, "history": [], "latest": None, "trend": "stable"})
+        return jsonify({"campaigns": campaigns, "history": [], "latest": None, "trend": "stable", "strategy": cache.get("strategy", {})})
 
     entry = cache.get(campaign_id)
     if not entry:
@@ -294,6 +306,9 @@ def _scheduler_loop():
 
             # Reset stale running jobs (worker crashed)
             db.reset_stale_jobs(timeout_minutes=10)
+
+            # Auto-cleanup workers with no heartbeat for 5+ minutes
+            db.cleanup_stale_workers(timeout_minutes=5)
 
         except Exception as e:
             log.error("Scheduler error: %s", e)

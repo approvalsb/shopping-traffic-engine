@@ -6,9 +6,29 @@ Uses requests + BeautifulSoup for lightweight scraping (no Selenium).
 import argparse
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
+
+# Load .env file manually (no external dependency)
+def _load_dotenv():
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+_load_dotenv()
 
 import requests
 from bs4 import BeautifulSoup
@@ -35,7 +55,7 @@ def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def check_blog_rank(keyword: str, blog_id: str, max_pages: int = 3) -> dict:
+def check_blog_rank(keyword: str, blog_id: str, max_pages: int = 5) -> dict:
     """Search Naver blog tab and find the target blog's rank position.
 
     Args:
@@ -111,7 +131,7 @@ def check_blog_rank(keyword: str, blog_id: str, max_pages: int = 3) -> dict:
     return result
 
 
-def check_place_rank(keyword: str, place_name: str, max_pages: int = 3) -> dict:
+def check_place_rank(keyword: str, place_name: str, max_pages: int = 5) -> dict:
     """Search Naver place and find the target place's rank position.
 
     Args:
@@ -177,7 +197,7 @@ def check_place_rank(keyword: str, place_name: str, max_pages: int = 3) -> dict:
     return result
 
 
-def check_shopping_rank(keyword: str, product_name: str, max_pages: int = 3) -> dict:
+def check_shopping_rank(keyword: str, product_name: str, max_pages: int = 5) -> dict:
     """Search Naver shopping and find the target product's rank position.
 
     Args:
@@ -242,6 +262,151 @@ def check_shopping_rank(keyword: str, product_name: str, max_pages: int = 3) -> 
     return result
 
 
+def find_related_rankings(keyword: str, blog_id: str, api_key: str) -> list[dict]:
+    """Generate related keywords via Gemini and check blog rank for each.
+
+    Args:
+        keyword: Original search keyword
+        blog_id: Naver blog ID
+        api_key: Gemini API key
+
+    Returns:
+        list of dicts with keyword, rank, page
+    """
+    prompt = (
+        "다음 네이버 블로그 검색 키워드의 짧은 연관 키워드 3개를 JSON 배열로만 응답해줘. "
+        "원래 키워드의 핵심 단어를 포함한 2-3단어 조합으로. "
+        f"키워드: {keyword}"
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+    }
+
+    related_keywords = []
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        # Extract JSON array from response (may be wrapped in markdown code block)
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+        related_keywords = json.loads(text.strip())
+        log.info("Related keywords for '%s': %s", keyword, related_keywords)
+    except Exception as e:
+        log.error("Gemini related keyword generation failed: %s", e)
+        return []
+
+    results = []
+    for rk in related_keywords[:3]:
+        time.sleep(3)
+        try:
+            rank_result = check_blog_rank(rk, blog_id, max_pages=3)
+            results.append({
+                "keyword": rk,
+                "rank": rank_result.get("rank"),
+                "page": rank_result.get("page", 0),
+            })
+        except Exception as e:
+            log.error("Related rank check failed for '%s': %s", rk, e)
+            results.append({"keyword": rk, "rank": None, "page": 0})
+
+    return results
+
+
+def generate_strategy(results: list[dict], customer_name: str) -> dict:
+    """Generate AI strategy based on tracking results using Gemini 2.5 Flash.
+
+    Returns dict with:
+      - keyword_strategies: list of {keyword, rank, strategy}
+      - overall_strategy: str (overall blog strategy, 3-5 sentences)
+      - generated_at: str (datetime)
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        log.warning("GEMINI_API_KEY not set, skipping strategy generation")
+        return {}
+
+    # Build keyword data text
+    keyword_lines = []
+    for r in results:
+        keyword = r.get("keyword", "")
+        rank = r.get("rank")
+        rank_str = f"#{rank}" if rank else "미발견"
+        related = r.get("related_rankings", [])
+        related_str = ""
+        if related:
+            parts = [f"{rr['keyword']}(#{rr['rank']})" if rr.get("rank") else f"{rr['keyword']}(미발견)" for rr in related]
+            related_str = f" | 연관키워드: {', '.join(parts)}"
+        keyword_lines.append(f"- {keyword}: {rank_str}{related_str}")
+
+    keyword_data = "\n".join(keyword_lines)
+
+    prompt = f"""당신은 네이버 블로그 SEO 전문 컨설턴트입니다.
+
+고객: {customer_name}
+현재 키워드별 네이버 블로그 검색 순위:
+{keyword_data}
+
+위 데이터를 분석하여 다음을 JSON으로 응답해주세요:
+{{
+  "keyword_strategies": [
+    {{"keyword": "키워드명", "current_status": "현재상태 요약", "action": "구체적 액션 1-2문장"}}
+  ],
+  "overall_strategy": "블로그 전체 운영 방향 3-5문장. 현재 상황 진단과 향후 1개월 전략을 포함."
+}}
+
+전략 작성 시 규칙:
+- 구체적이고 실행 가능한 액션 위주로
+- 순위가 없는 키워드는 노출 가능성을 높이는 방법 제안
+- 순위가 있는 키워드는 순위 상승/유지 전략 제안
+- 고객이 읽어도 이해할 수 있는 쉬운 한국어로
+- 연관 키워드 데이터가 있으면 활용하여 전략 제안"""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+    }
+
+    try:
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        # Extract JSON from response (may be wrapped in markdown code block)
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+        strategy = json.loads(text.strip())
+        strategy["generated_at"] = _now_str()
+        log.info("Strategy generated for '%s': %d keyword strategies", customer_name, len(strategy.get("keyword_strategies", [])))
+        return strategy
+    except Exception as e:
+        log.error("Strategy generation failed for '%s': %s", customer_name, e)
+        return {}
+
+
+def _update_strategy_cache(strategy_by_customer: dict):
+    """Save strategy per customer_name to tracking_cache.json."""
+    CACHE_PATH.parent.mkdir(exist_ok=True)
+
+    cache = {}
+    if CACHE_PATH.exists():
+        try:
+            cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cache = {}
+
+    cache["strategy"] = strategy_by_customer
+    CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("Strategy cache updated for %d customers", len(strategy_by_customer))
+
+
 def _update_cache(campaign_id: int, tracking_result: dict):
     """Write tracking result to JSON cache for the dashboard to read."""
     CACHE_PATH.parent.mkdir(exist_ok=True)
@@ -260,6 +425,10 @@ def _update_cache(campaign_id: int, tracking_result: dict):
         cache[key] = {"latest": None, "history": []}
 
     cache[key]["latest"] = tracking_result
+
+    # Preserve related_rankings in latest if present
+    if "related_rankings" in tracking_result:
+        cache[key]["latest"]["related_rankings"] = tracking_result["related_rankings"]
 
     # Append to history (keep last 90 entries)
     cache[key]["history"].append(tracking_result)
@@ -309,6 +478,16 @@ def run_tracking(campaign_id: int) -> dict | None:
         if "blog.naver.com/" in blog_id:
             blog_id = blog_id.split("blog.naver.com/")[-1].strip("/")
         result = check_blog_rank(keyword, blog_id)
+        # If not found, try related keywords via Gemini
+        if result.get("rank") is None:
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if api_key:
+                related = find_related_rankings(keyword, blog_id, api_key)
+                if related:
+                    result["related_rankings"] = related
+                    log.info("Related rankings for '%s': %s", keyword, related)
+            else:
+                log.warning("GEMINI_API_KEY not set, skipping related keyword search")
     elif ctype == "place":
         result = check_place_rank(keyword, target)
     elif ctype == "shopping":
@@ -342,7 +521,6 @@ def run_all_tracking() -> list[dict]:
 
     Returns list of tracking results.
     """
-    import time
 
     campaigns = list_campaigns(active_only=True)
     if not campaigns:
@@ -365,11 +543,32 @@ def run_all_tracking() -> list[dict]:
             log.error("  -> error: %s", e)
 
         # Polite delay between requests to avoid rate limiting
-        time.sleep(2)
+        time.sleep(4)
 
     # Summary
     found = sum(1 for r in results if r.get("rank") is not None)
     log.info("Tracking complete: %d/%d campaigns tracked, %d ranked", len(results), len(campaigns), found)
+
+    # Generate AI strategy per customer
+    if results:
+        # Group results by customer_name
+        by_customer: dict[str, list[dict]] = {}
+        for r in results:
+            cname = r.get("customer_name", "Unknown")
+            by_customer.setdefault(cname, []).append(r)
+
+        strategy_by_customer = {}
+        for cname, cresults in by_customer.items():
+            try:
+                strategy = generate_strategy(cresults, cname)
+                if strategy:
+                    strategy_by_customer[cname] = strategy
+            except Exception as e:
+                log.error("Strategy generation error for '%s': %s", cname, e)
+
+        if strategy_by_customer:
+            _update_strategy_cache(strategy_by_customer)
+
     return results
 
 

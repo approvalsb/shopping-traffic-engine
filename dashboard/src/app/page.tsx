@@ -103,7 +103,7 @@ export default function DashboardPage() {
               Traffic Engine Dashboard
             </h1>
             <p className="text-sm text-[#8888aa]">
-              {summary?.date || new Date().toISOString().split("T")[0]}
+              {summary?.date || (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`; })()}
             </p>
           </div>
           <button

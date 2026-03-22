@@ -14,6 +14,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import undetected_chromedriver as uc
+from proxy_auth import setup_proxy, cleanup_proxy_extension
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -100,7 +101,7 @@ class NaverShoppingEngine:
 
         # Proxy
         if self.proxy:
-            options.add_argument(f"--proxy-server={self.proxy}")
+            self._proxy_ext_dir = setup_proxy(options, self.proxy)
 
         # Profile persistence
         if self.profile_dir:
@@ -122,7 +123,7 @@ class NaverShoppingEngine:
         }
         options.add_experimental_option("prefs", prefs)
 
-        self.driver = uc.Chrome(options=options, version_main=145)
+        self.driver = uc.Chrome(options=options, version_main=146)
         self.human = HumanBehavior(self.driver)
 
         # Set page load timeout
@@ -139,6 +140,8 @@ class NaverShoppingEngine:
                 self.driver.quit()
             except Exception:
                 pass
+        cleanup_proxy_extension(getattr(self, '_proxy_ext_dir', None))
+        self._proxy_ext_dir = None
         log.info("Chrome stopped")
 
     def execute_visit(self, campaign: Campaign) -> ExecutionResult:

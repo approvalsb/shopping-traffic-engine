@@ -25,6 +25,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import undetected_chromedriver as uc
+from proxy_auth import setup_proxy, cleanup_proxy_extension
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import (
@@ -94,6 +95,7 @@ class NaverBlogEngine:
         self.captcha_solver = CaptchaSolver()
         self.account_mgr = AccountManager()
         self._logged_in_account = None
+        self._proxy_ext_dir = None
 
     def start(self):
         fp = generate_fingerprint()
@@ -104,7 +106,7 @@ class NaverBlogEngine:
         options.add_argument("--lang=ko-KR")
 
         if self.proxy:
-            options.add_argument(f"--proxy-server={self.proxy}")
+            self._proxy_ext_dir = setup_proxy(options, self.proxy)
         if self.headless:
             options.add_argument("--headless=new")
 
@@ -118,7 +120,7 @@ class NaverBlogEngine:
         }
         options.add_experimental_option("prefs", prefs)
 
-        self.driver = uc.Chrome(options=options, version_main=145)
+        self.driver = uc.Chrome(options=options, version_main=146)
         self.human = HumanBehavior(self.driver)
         self.driver.set_page_load_timeout(30)
 
@@ -131,6 +133,8 @@ class NaverBlogEngine:
                 self.driver.quit()
             except Exception:
                 pass
+        cleanup_proxy_extension(self._proxy_ext_dir)
+        self._proxy_ext_dir = None
         log.info("Chrome stopped")
 
     def _do_login(self, campaign: BlogCampaign) -> Optional[str]:

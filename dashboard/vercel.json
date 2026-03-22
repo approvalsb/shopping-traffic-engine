@@ -1,8 +1,5 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run build",
-  "installCommand": "npm install",
-  "env": {
-    "MASTER_URL": "http://localhost:5000"
-  }
+  "installCommand": "npm install"
 }

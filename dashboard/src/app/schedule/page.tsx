@@ -22,11 +22,42 @@ interface Job {
   customer_name: string;
   product_name: string;
   engage_like: boolean;
+  options: string[] | string;
   status: string;
   started_at: string | null;
   completed_at: string | null;
   duration_sec: number | null;
   error: string | null;
+}
+
+// L2/L3 option keys
+const L2_OPTIONS = new Set([
+  "wish_click", "cart_add", "review_dwell", "compare_behavior", "category_entry",
+  "store_browse", "sort_filter", "revisit_sim", "price_compare", "inquiry_click",
+  "conversion_sim", "save_click", "map_traffic",
+  "blog_like", "blog_comment_view", "blog_series",
+]);
+const L3_OPTIONS = new Set(["regional_targeting"]);
+
+function parseOptions(opts?: string[] | string): string[] {
+  if (!opts) return [];
+  if (typeof opts === "string") {
+    try { return JSON.parse(opts); } catch { return []; }
+  }
+  return opts;
+}
+
+function JobLayerBadges({ options }: { options?: string[] | string }) {
+  const opts = parseOptions(options);
+  const hasL2 = opts.some((k) => L2_OPTIONS.has(k));
+  const hasL3 = opts.some((k) => L3_OPTIONS.has(k));
+  return (
+    <span className="inline-flex gap-0.5">
+      <span className="rounded px-1 py-px text-[8px] font-extrabold text-black bg-[#00e676]">L1</span>
+      <span className={`rounded px-1 py-px text-[8px] font-extrabold ${hasL2 ? "text-black bg-[#ff9052]" : "text-[#555] bg-[#2a2a5a]"}`}>L2</span>
+      <span className={`rounded px-1 py-px text-[8px] font-extrabold ${hasL3 ? "text-black bg-[#448aff]" : "text-[#555] bg-[#2a2a5a]"}`}>L3</span>
+    </span>
+  );
 }
 
 interface HourBlock {
@@ -91,9 +122,13 @@ export default function SchedulePage() {
   const [data, setData] = useState<ScheduleData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
 
   const fetchSchedule = useCallback(async () => {
     setLoading(true);
@@ -131,7 +166,10 @@ export default function SchedulePage() {
   const collapseAll = () => setExpanded(new Set());
 
   const currentHour = new Date().getHours();
-  const isToday = selectedDate === new Date().toISOString().split("T")[0];
+  const isToday = selectedDate === (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  })();
 
   return (
     <>
@@ -345,6 +383,7 @@ export default function SchedulePage() {
                                 {job.engage_like && (
                                   <Heart className="ml-1.5 inline h-3 w-3 text-[#ff6eb4]" />
                                 )}
+                                <span className="ml-1.5"><JobLayerBadges options={job.options} /></span>
                               </div>
 
                               {/* Duration / Status label */}
