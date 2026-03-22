@@ -66,6 +66,7 @@ class BlogCampaign:
     logged_in: bool = False       # Use logged-in account for this visit
     engage_like: bool = False     # Click 공감 after browsing
     engage_comment: str = ""      # Post comment text (empty = skip)
+    options: list = None          # L2/L3 paid option keys
 
 
 @dataclass
@@ -158,6 +159,134 @@ class NaverBlogEngine:
             self.account_mgr.mark_used(account["id"], success=False)
             log.warning("Login failed for [%s], proceeding without login", account["id"])
             return None
+
+    def _execute_blog_l2(self, opts: list):
+        """Execute L2 blog behaviors based on selected options."""
+        try:
+            # blog_like: click 공감 (works without login too, just may not persist)
+            if "blog_like" in opts:
+                try:
+                    self._do_engage_like()
+                except Exception as e:
+                    log.warning("[L2] blog_like failed: %s", e)
+
+            # blog_comment_view: scroll to comment section and read
+            if "blog_comment_view" in opts:
+                try:
+                    comment_selectors = [
+                        "[class*='comment']", "[id*='comment']",
+                        "[class*='Comment']", "[class*='reply']",
+                    ]
+                    found = False
+                    for sel in comment_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                log.info("[L2] Scrolled to comment section")
+                                found = True
+                                break
+                        if found:
+                            break
+
+                    # Also try inside iframe
+                    if not found:
+                        iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                        for iframe in iframes:
+                            try:
+                                self.driver.switch_to.frame(iframe)
+                                for sel in comment_selectors:
+                                    els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                                    for el in els:
+                                        if el.is_displayed():
+                                            self.human.scroll_to_element(el)
+                                            log.info("[L2] Scrolled to comment in iframe")
+                                            found = True
+                                            break
+                                    if found:
+                                        break
+                                self.driver.switch_to.default_content()
+                                if found:
+                                    break
+                            except Exception:
+                                self.driver.switch_to.default_content()
+
+                    # Dwell on comments
+                    for _ in range(random.randint(2, 4)):
+                        self.human.scroll_down(random.randint(100, 300))
+                        time.sleep(random.uniform(2.0, 5.0))
+
+                except Exception as e:
+                    log.warning("[L2] blog_comment_view failed: %s", e)
+
+            # blog_series: visit another post from same blog
+            if "blog_series" in opts:
+                try:
+                    # Look for other post links in the blog
+                    series_selectors = [
+                        "[class*='series'] a", "[class*='relate'] a",
+                        "[class*='post-list'] a", "[class*='otherPost'] a",
+                        "[class*='another'] a", "[class*='prev'] a",
+                    ]
+                    clicked = False
+
+                    # Try in main page first
+                    for sel in series_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            href = el.get_attribute("href") or ""
+                            if el.is_displayed() and "blog" in href:
+                                self.human.scroll_to_element(el)
+                                time.sleep(random.uniform(0.5, 1.5))
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked related blog post")
+                                clicked = True
+                                time.sleep(random.uniform(3.0, 6.0))
+                                # Browse the other post briefly
+                                for _ in range(random.randint(2, 3)):
+                                    self.human.scroll_down(random.randint(200, 500))
+                                    time.sleep(random.uniform(1.5, 3.0))
+                                # Go back
+                                self.driver.back()
+                                time.sleep(random.uniform(1.5, 3.0))
+                                break
+                        if clicked:
+                            break
+
+                    # Try inside iframe
+                    if not clicked:
+                        iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                        for iframe in iframes:
+                            try:
+                                self.driver.switch_to.frame(iframe)
+                                for sel in series_selectors:
+                                    els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                                    for el in els:
+                                        href = el.get_attribute("href") or ""
+                                        if el.is_displayed() and href:
+                                            self.human.human_click(el)
+                                            log.info("[L2] Clicked related post in iframe")
+                                            clicked = True
+                                            break
+                                    if clicked:
+                                        break
+                                self.driver.switch_to.default_content()
+                                if clicked:
+                                    time.sleep(random.uniform(3.0, 6.0))
+                                    for _ in range(random.randint(2, 3)):
+                                        self.human.scroll_down(random.randint(200, 400))
+                                        time.sleep(random.uniform(1.5, 3.0))
+                                    self.driver.back()
+                                    time.sleep(random.uniform(1.5, 3.0))
+                                    break
+                            except Exception:
+                                self.driver.switch_to.default_content()
+
+                except Exception as e:
+                    log.warning("[L2] blog_series failed: %s", e)
+
+        except Exception as e:
+            log.warning("[L2] Blog L2 error: %s", e)
 
     def _do_engage_like(self) -> bool:
         """Click 공감/좋아요 button on current blog post."""
@@ -395,6 +524,12 @@ class NaverBlogEngine:
                 if campaign.engage_comment:
                     time.sleep(random.uniform(2.0, 5.0))
                     commented = self._do_engage_comment(campaign.engage_comment)
+
+            # 11a. L2 options — additional blog behaviors
+            opts = campaign.options or []
+            if opts:
+                log.info("[%s] Executing L2 options: %s", campaign.keyword, opts)
+                self._execute_blog_l2(opts)
 
             # 12. Close extra tabs
             self._close_extra_tabs()

@@ -48,6 +48,7 @@ class Campaign:
     daily_target: int = 100
     dwell_time_min: float = 30.0
     dwell_time_max: float = 90.0
+    options: list = None  # L2/L3 paid option keys
 
 
 @dataclass
@@ -194,6 +195,12 @@ class NaverShoppingEngine:
             pbrowser = PersonaBrowser(self.driver, self.human, persona)
             pbrowser.browse_product(campaign.dwell_time_min, campaign.dwell_time_max)
 
+            # 6a. L2 options — additional shopping behaviors
+            opts = campaign.options or []
+            if opts:
+                log.info("[%s] Executing L2 options: %s", campaign.keyword, opts)
+                self._execute_shopping_l2(opts)
+
             # 7. Close product tab, return to search
             self._close_product_tab()
 
@@ -221,6 +228,198 @@ class NaverShoppingEngine:
 
         self._save_log(result)
         return result
+
+    def _execute_shopping_l2(self, opts: list):
+        """Execute L2 shopping behaviors based on selected options."""
+        try:
+            # wish_click: click 찜/좋아요
+            if "wish_click" in opts:
+                try:
+                    selectors = [
+                        "button[class*='wish']", "button[class*='like']",
+                        "a[class*='wish']", "button[class*='zzim']",
+                        "[class*='_productWish']", "[class*='favoriteBtn']",
+                    ]
+                    for sel in selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                time.sleep(random.uniform(0.5, 1.5))
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked wish/like button")
+                                time.sleep(random.uniform(1.0, 2.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] wish_click failed: %s", e)
+
+            # review_dwell: scroll to reviews and read
+            if "review_dwell" in opts:
+                try:
+                    review_selectors = [
+                        "[class*='review']", "[id*='review']",
+                        "a[href*='review']", "[class*='_review']",
+                    ]
+                    for sel in review_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed() and el.tag_name in ("a", "button", "li", "div"):
+                                self.human.scroll_to_element(el)
+                                try:
+                                    self.human.human_click(el)
+                                except Exception:
+                                    pass
+                                log.info("[L2] Scrolled to review section")
+                                # Dwell on reviews
+                                for _ in range(random.randint(2, 4)):
+                                    self.human.scroll_down(random.randint(200, 400))
+                                    time.sleep(random.uniform(2.0, 5.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] review_dwell failed: %s", e)
+
+            # cart_add: click add-to-cart button
+            if "cart_add" in opts:
+                try:
+                    cart_selectors = [
+                        "button[class*='cart']", "button[class*='basket']",
+                        "[class*='addCart']", "[class*='_cart']",
+                        "a[class*='cart']",
+                    ]
+                    for sel in cart_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                time.sleep(random.uniform(0.5, 1.0))
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked add-to-cart")
+                                time.sleep(random.uniform(1.5, 3.0))
+                                # Close cart popup if any
+                                try:
+                                    close_btns = self.driver.find_elements(By.CSS_SELECTOR, "[class*='close'], [class*='cancel']")
+                                    for cb in close_btns:
+                                        if cb.is_displayed():
+                                            cb.click()
+                                            break
+                                except Exception:
+                                    pass
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] cart_add failed: %s", e)
+
+            # compare_behavior: scroll back up, look at other products
+            if "compare_behavior" in opts:
+                try:
+                    log.info("[L2] Simulating compare behavior")
+                    self.human.scroll_up(random.randint(500, 1000))
+                    time.sleep(random.uniform(1.0, 2.0))
+                    self.human.scroll_down(random.randint(300, 600))
+                    time.sleep(random.uniform(2.0, 4.0))
+                except Exception as e:
+                    log.warning("[L2] compare_behavior failed: %s", e)
+
+            # price_compare: click price comparison tab
+            if "price_compare" in opts:
+                try:
+                    price_selectors = [
+                        "a[href*='price']", "[class*='priceCompare']",
+                        "[class*='_price']", "a[class*='compare']",
+                    ]
+                    for sel in price_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked price compare")
+                                time.sleep(random.uniform(3.0, 6.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] price_compare failed: %s", e)
+
+            # inquiry_click: open Q&A section
+            if "inquiry_click" in opts:
+                try:
+                    qa_selectors = [
+                        "[class*='inquiry']", "[class*='qna']",
+                        "a[href*='inquiry']", "a[href*='qna']",
+                        "[class*='_qa']",
+                    ]
+                    for sel in qa_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                self.human.human_click(el)
+                                log.info("[L2] Opened Q&A section")
+                                time.sleep(random.uniform(2.0, 4.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] inquiry_click failed: %s", e)
+
+            # store_browse: visit other products in same store
+            if "store_browse" in opts:
+                try:
+                    store_selectors = [
+                        "a[href*='smartstore']", "[class*='storeName']",
+                        "[class*='_store']", "a[class*='store']",
+                    ]
+                    for sel in store_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                self.human.human_click(el)
+                                log.info("[L2] Browsing store page")
+                                time.sleep(random.uniform(3.0, 6.0))
+                                # Scroll around the store
+                                for _ in range(random.randint(2, 3)):
+                                    self.human.scroll_down(random.randint(300, 600))
+                                    time.sleep(random.uniform(1.5, 3.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] store_browse failed: %s", e)
+
+            # sort_filter: click a sort option (review/price)
+            if "sort_filter" in opts:
+                try:
+                    sort_selectors = [
+                        "[class*='sort'] a", "[class*='filter'] button",
+                        "[class*='_sortFilter']", "a[class*='sort']",
+                    ]
+                    for sel in sort_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        if len(els) > 1:
+                            el = random.choice(els[1:])  # skip first (default sort)
+                            if el.is_displayed():
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked sort/filter")
+                                time.sleep(random.uniform(2.0, 4.0))
+                                break
+                except Exception as e:
+                    log.warning("[L2] sort_filter failed: %s", e)
+
+        except Exception as e:
+            log.warning("[L2] Shopping L2 error: %s", e)
 
     def _check_blocked(self) -> bool:
         """Check if Naver blocked us (captcha or restriction page)."""

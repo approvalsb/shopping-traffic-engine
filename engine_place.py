@@ -51,6 +51,7 @@ class PlaceCampaign:
     daily_target: int = 100
     dwell_time_min: float = 20.0
     dwell_time_max: float = 60.0
+    options: list = None  # L2/L3 paid option keys
 
 
 @dataclass
@@ -174,6 +175,12 @@ class NaverPlaceEngine:
             browser = PersonaBrowser(self.driver, self.human, persona)
             browser.browse_place(campaign.dwell_time_min, campaign.dwell_time_max)
 
+            # 8a. L2 options — additional place behaviors
+            opts = campaign.options or []
+            if opts:
+                log.info("[%s] Executing L2 options: %s", campaign.keyword, opts)
+                self._execute_place_l2(opts)
+
             # 9. Close tab if new one opened
             self._close_extra_tabs()
 
@@ -208,6 +215,100 @@ class NaverPlaceEngine:
                 error=str(e),
                 screenshot=err_shot,
             )
+
+    def _execute_place_l2(self, opts: list):
+        """Execute L2 place behaviors based on selected options."""
+        try:
+            # conversion_sim: click phone/directions/review buttons
+            if "conversion_sim" in opts:
+                try:
+                    conv_selectors = [
+                        "a[href*='tel:']", "[class*='phone']", "[class*='call']",
+                        "[class*='direction']", "[class*='route']", "[class*='navi']",
+                        "a[href*='map']",
+                    ]
+                    clicked_any = False
+                    for sel in conv_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed() and not clicked_any:
+                                self.human.scroll_to_element(el)
+                                time.sleep(random.uniform(0.5, 1.0))
+                                # Don't actually call — just hover/scroll to it
+                                log.info("[L2] Conversion sim: found %s", sel)
+                                clicked_any = True
+                                time.sleep(random.uniform(1.0, 2.0))
+                                break
+                    # Try clicking directions
+                    dir_selectors = ["[class*='direction']", "[class*='길찾기']", "a[href*='direction']"]
+                    for sel in dir_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked directions button")
+                                time.sleep(random.uniform(2.0, 4.0))
+                                # Go back
+                                self.driver.back()
+                                time.sleep(random.uniform(1.5, 3.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] conversion_sim failed: %s", e)
+
+            # save_click: click save/bookmark button
+            if "save_click" in opts:
+                try:
+                    save_selectors = [
+                        "[class*='save']", "[class*='bookmark']",
+                        "[class*='zzim']", "[class*='favorite']",
+                        "button[class*='저장']",
+                    ]
+                    for sel in save_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                time.sleep(random.uniform(0.5, 1.0))
+                                self.human.human_click(el)
+                                log.info("[L2] Clicked save/bookmark")
+                                time.sleep(random.uniform(1.0, 2.5))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] save_click failed: %s", e)
+
+            # map_traffic: interact with the map section
+            if "map_traffic" in opts:
+                try:
+                    map_selectors = [
+                        "[class*='map']", "[id*='map']",
+                        "img[src*='map']", "[class*='Map']",
+                    ]
+                    for sel in map_selectors:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            if el.is_displayed():
+                                self.human.scroll_to_element(el)
+                                log.info("[L2] Scrolled to map section")
+                                time.sleep(random.uniform(2.0, 4.0))
+                                # Simulate looking at the map
+                                self.human.scroll_down(random.randint(100, 200))
+                                time.sleep(random.uniform(1.0, 2.0))
+                                break
+                        else:
+                            continue
+                        break
+                except Exception as e:
+                    log.warning("[L2] map_traffic failed: %s", e)
+
+        except Exception as e:
+            log.warning("[L2] Place L2 error: %s", e)
 
     def _check_blocked(self) -> bool:
         try:

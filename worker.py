@@ -131,8 +131,21 @@ class TrafficWorker:
         start = datetime.now()
         proxy = self._get_proxy()
 
+        # Parse options from JSON string or list
+        raw_opts = job.get("options")
+        if isinstance(raw_opts, str):
+            try:
+                import json
+                opts = json.loads(raw_opts)
+            except Exception:
+                opts = []
+        elif isinstance(raw_opts, list):
+            opts = raw_opts
+        else:
+            opts = []
+
         if job_type == "blog":
-            do_like = bool(job.get("engage_like", 0))
+            do_like = bool(job.get("engage_like", 0)) or "blog_like" in opts
             engine = NaverBlogEngine(proxy=proxy, headless=self.headless)
             campaign = BlogCampaign(
                 keyword=job["keyword"],
@@ -143,6 +156,7 @@ class TrafficWorker:
                 dwell_time_max=job.get("dwell_time_max", 45.0),
                 logged_in=do_like,
                 engage_like=do_like,
+                options=opts,
             )
         elif job_type == "place":
             engine = NaverPlaceEngine(proxy=proxy, headless=self.headless)
@@ -152,6 +166,7 @@ class TrafficWorker:
                 daily_target=1,
                 dwell_time_min=job.get("dwell_time_min", 20.0),
                 dwell_time_max=job.get("dwell_time_max", 45.0),
+                options=opts,
             )
         else:
             engine = NaverShoppingEngine(proxy=proxy, headless=self.headless)
@@ -162,6 +177,7 @@ class TrafficWorker:
                 daily_target=1,
                 dwell_time_min=job.get("dwell_time_min", 30.0),
                 dwell_time_max=job.get("dwell_time_max", 90.0),
+                options=opts,
             )
 
         try:

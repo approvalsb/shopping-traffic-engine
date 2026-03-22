@@ -389,7 +389,7 @@ def fetch_next_jobs(worker_id: str, batch_size: int = 5) -> list[dict]:
     rows = conn.execute(
         """SELECT j.id, j.campaign_id, j.scheduled_date, j.scheduled_hour,
                   c.type, c.keyword, c.product_name, c.product_url,
-                  c.dwell_time_min, c.dwell_time_max, c.engage_like
+                  c.dwell_time_min, c.dwell_time_max, c.engage_like, c.options
            FROM jobs j
            JOIN campaigns c ON j.campaign_id = c.id
            WHERE j.status = 'pending'
