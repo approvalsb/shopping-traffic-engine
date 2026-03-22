@@ -157,6 +157,8 @@ export default function CampaignsPage() {
     });
     setEditingId(c.id);
     setShowForm(true);
+    // Scroll to top so user can see the edit form
+    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 100);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
